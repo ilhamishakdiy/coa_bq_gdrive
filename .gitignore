@@ -1,0 +1,55 @@
+# =============================================================================
+# Credentials and local environment
+# =============================================================================
+
+# Ignore every real service-account credential file.
+service_account/*
+
+# Explicitly protect production raw service-account keys.
+service_account/prod-raw-*.json
+
+# Keep the placeholder example available in Git.
+!service_account/service-account.example.json
+
+.env
+
+# =============================================================================
+# Local SSH keys
+# =============================================================================
+
+work
+work.pub
+*.pem
+*.key
+
+# =============================================================================
+# Python-generated files
+# =============================================================================
+
+__pycache__/
+*.py[cod]
+
+# =============================================================================
+# Virtual environments and test caches
+# =============================================================================
+
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# =============================================================================
+# Logs, temporary files, and editor settings
+# =============================================================================
+
+*.log
+*.tmp
+*.temp
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
