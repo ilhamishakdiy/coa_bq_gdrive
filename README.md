@@ -57,11 +57,29 @@ CSV_DELIMITER=,
 
 You can change it to another single character, such as `|`, `;`, or `\t`.
 
-GCS files are streamed directly to Google Drive without creating a complete
-temporary local file. Memory usage is bounded by the configured chunk size:
+BigQuery can split one CSV export into several shards. By default, the workflow
+streams those shards into one GCS object, retains the header from only the first
+shard, and uploads the merged CSV to Google Drive:
+
+```dotenv
+MERGE_GCS_SHARDS=true
+DELETE_GCS_SHARDS_AFTER_MERGE=true
+```
+
+Set `DELETE_GCS_SHARDS_AFTER_MERGE=false` to retain the original shards after a
+successful merge. Set `MERGE_GCS_SHARDS=false` to upload every shard separately.
+
+Files are streamed without creating a complete temporary local file. Memory
+usage is bounded by the configured chunk size:
 
 ```dotenv
 STREAM_CHUNK_SIZE_MB=8
+```
+
+To delete the merged GCS object after a successful Drive upload:
+
+```dotenv
+DELETE_GCS_AFTER_DRIVE_UPLOAD=true
 ```
 
 <!-- ====================================================================== -->

@@ -284,7 +284,7 @@ def export_bigquery_to_gcs() -> list[str]:
                 uri = '{escaped_uri}',
                 format = 'CSV',
                 field_delimiter = '{escaped_delimiter}',
-                overwrite = true,
+                overwrite = false,
                 header = true
             ) AS
             {source_query}

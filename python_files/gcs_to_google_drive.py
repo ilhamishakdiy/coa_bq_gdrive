@@ -11,6 +11,7 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -220,7 +221,119 @@ def _list_matching_blobs(
             f"No GCS objects matched the export URI: {gcs_uri}"
         )
 
-    return matching_blobs
+    return sorted(matching_blobs, key=lambda blob: blob.name)
+
+
+def _build_merged_object_name(wildcard_object_name: str) -> str:
+    """Replace the export wildcard with a stable merged-file marker."""
+
+    if "*" not in wildcard_object_name:
+        raise ValueError("The GCS export URI must contain a wildcard (*).")
+
+    return wildcard_object_name.replace("*", "merged", 1)
+
+
+def _merge_csv_shards(
+    storage_client: storage.Client,
+    gcs_uri: str,
+    stream_chunk_size: int,
+    delete_source_shards: bool,
+) -> Any:
+    """Merge CSV shards into one GCS object and retain only one header row."""
+
+    # -------------------------------------------------------------------------
+    # Resolve and sort source shards before creating the destination object.
+    # -------------------------------------------------------------------------
+
+    bucket_name, wildcard_object_name = _split_gcs_uri(gcs_uri)
+    merged_object_name = _build_merged_object_name(wildcard_object_name)
+    source_blobs = [
+        blob
+        for blob in _list_matching_blobs(storage_client, gcs_uri)
+        if blob.name != merged_object_name
+    ]
+
+    if not source_blobs:
+        existing_merged_blob = storage_client.bucket(bucket_name).blob(
+            merged_object_name
+        )
+        if existing_merged_blob.exists():
+            LOGGER.info(
+                "Using existing merged GCS object: gs://%s/%s",
+                bucket_name,
+                merged_object_name,
+            )
+            return existing_merged_blob
+
+        raise FileNotFoundError(
+            f"No source CSV shards were found for: {gcs_uri}"
+        )
+
+    merged_blob = storage_client.bucket(bucket_name).blob(merged_object_name)
+    LOGGER.info(
+        "Merging %d CSV shards into gs://%s/%s",
+        len(source_blobs),
+        bucket_name,
+        merged_object_name,
+    )
+
+    # -------------------------------------------------------------------------
+    # Stream each shard into GCS and skip duplicate headers after shard one.
+    # -------------------------------------------------------------------------
+
+    try:
+        with merged_blob.open(
+            "wb",
+            chunk_size=stream_chunk_size,
+            content_type="text/csv",
+        ) as merged_stream:
+            for shard_index, source_blob in enumerate(source_blobs):
+                LOGGER.info(
+                    "Appending shard %d/%d: gs://%s/%s",
+                    shard_index + 1,
+                    len(source_blobs),
+                    bucket_name,
+                    source_blob.name,
+                )
+
+                with source_blob.open(
+                    "rb",
+                    chunk_size=stream_chunk_size,
+                ) as source_stream:
+                    if shard_index > 0:
+                        source_stream.readline()
+
+                    shutil.copyfileobj(
+                        source_stream,
+                        merged_stream,
+                        length=stream_chunk_size,
+                    )
+    except GoogleAPIError:
+        LOGGER.exception(
+            "Failed to merge CSV shards for %s",
+            gcs_uri,
+        )
+        raise
+
+    # -------------------------------------------------------------------------
+    # Delete source shards only after the merged object is fully committed.
+    # -------------------------------------------------------------------------
+
+    if delete_source_shards:
+        for source_blob in source_blobs:
+            source_blob.delete()
+            LOGGER.info(
+                "Deleted source shard gs://%s/%s",
+                bucket_name,
+                source_blob.name,
+            )
+
+    LOGGER.info(
+        "CSV shard merge completed: gs://%s/%s",
+        bucket_name,
+        merged_object_name,
+    )
+    return merged_blob
 
 
 # =============================================================================
@@ -230,7 +343,7 @@ def _list_matching_blobs(
 def transfer_gcs_to_google_drive(
     gcs_uri: str | None = None,
 ) -> list[dict[str, str]]:
-    """Upload all files matching a GCS URI to the configured Drive folder."""
+    """Merge optional CSV shards and upload GCS files to Google Drive."""
 
     # -------------------------------------------------------------------------
     # Use the URI supplied by the flow runner, or fall back to .env.
@@ -243,6 +356,14 @@ def transfer_gcs_to_google_drive(
         "DELETE_GCS_AFTER_DRIVE_UPLOAD",
         default=False,
     )
+    merge_gcs_shards = _environment_boolean(
+        "MERGE_GCS_SHARDS",
+        default=True,
+    )
+    delete_source_shards = _environment_boolean(
+        "DELETE_GCS_SHARDS_AFTER_MERGE",
+        default=True,
+    )
     stream_chunk_size = _stream_chunk_size()
 
     bucket_name, _ = _split_gcs_uri(resolved_gcs_uri)
@@ -252,7 +373,22 @@ def transfer_gcs_to_google_drive(
         )
 
     storage_client, drive_client = _create_clients()
-    blobs = _list_matching_blobs(storage_client, resolved_gcs_uri)
+
+    # -------------------------------------------------------------------------
+    # Merge BigQuery CSV shards before uploading when configured.
+    # -------------------------------------------------------------------------
+
+    if merge_gcs_shards:
+        blobs = [
+            _merge_csv_shards(
+                storage_client=storage_client,
+                gcs_uri=resolved_gcs_uri,
+                stream_chunk_size=stream_chunk_size,
+                delete_source_shards=delete_source_shards,
+            )
+        ]
+    else:
+        blobs = _list_matching_blobs(storage_client, resolved_gcs_uri)
 
     # -------------------------------------------------------------------------
     # Stream each object directly from GCS into a resumable Drive upload.
