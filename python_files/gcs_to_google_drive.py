@@ -12,6 +12,7 @@ import mimetypes
 import os
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -224,6 +225,63 @@ def _list_matching_blobs(
     return sorted(matching_blobs, key=lambda blob: blob.name)
 
 
+def _discover_latest_merged_gcs_uri(
+    storage_client: storage.Client,
+    bucket_name: str,
+) -> str:
+    """Return the latest object under the configured merged-object folder."""
+
+    # -------------------------------------------------------------------------
+    # Limit discovery to a non-empty folder so the whole bucket is never used.
+    # -------------------------------------------------------------------------
+
+    merged_object_prefix = os.getenv(
+        "GCS_MERGED_OBJECT_PREFIX",
+        "exports/bigquery_merged",
+    ).strip("/")
+    if not merged_object_prefix:
+        raise ValueError(
+            "GCS_MERGED_OBJECT_PREFIX cannot be empty when discovering "
+            "the latest Google Drive source file."
+        )
+
+    folder_prefix = f"{merged_object_prefix}/"
+    candidate_blobs = [
+        blob
+        for blob in storage_client.list_blobs(
+            bucket_name,
+            prefix=folder_prefix,
+        )
+        if blob.name != folder_prefix
+    ]
+
+    if not candidate_blobs:
+        raise FileNotFoundError(
+            "No files were found under "
+            f"gs://{bucket_name}/{folder_prefix}"
+        )
+
+    # -------------------------------------------------------------------------
+    # Prefer GCS update time and use the object name as a stable tie-breaker.
+    # -------------------------------------------------------------------------
+
+    latest_blob = max(
+        candidate_blobs,
+        key=lambda blob: (
+            blob.updated
+            or blob.time_created
+            or datetime.min.replace(tzinfo=timezone.utc),
+            blob.name,
+        ),
+    )
+    latest_gcs_uri = f"gs://{bucket_name}/{latest_blob.name}"
+    LOGGER.info(
+        "Discovered latest merged GCS file: %s",
+        latest_gcs_uri,
+    )
+    return latest_gcs_uri
+
+
 def _build_merged_object_name(wildcard_object_name: str) -> str:
     """Replace the export wildcard with a stable merged-file marker."""
 
@@ -346,10 +404,9 @@ def transfer_gcs_to_google_drive(
     """Merge optional CSV shards and upload GCS files to Google Drive."""
 
     # -------------------------------------------------------------------------
-    # Use the URI supplied by the flow runner, or fall back to .env.
+    # Resolve an explicit URI before discovering the latest merged GCS object.
     # -------------------------------------------------------------------------
 
-    resolved_gcs_uri = gcs_uri or _required_environment_value("GCS_EXPORT_URI")
     configured_bucket = _required_environment_value("GCS_BUCKET_NAME")
     drive_folder_id = _required_environment_value("DRIVE_FOLDER_ID")
     delete_after_upload = _environment_boolean(
@@ -365,6 +422,15 @@ def transfer_gcs_to_google_drive(
         default=True,
     )
     stream_chunk_size = _stream_chunk_size()
+    storage_client, drive_client = _create_clients()
+    resolved_gcs_uri = (
+        gcs_uri
+        or _optional_environment_value("GCS_DRIVE_SOURCE_URI")
+        or _discover_latest_merged_gcs_uri(
+            storage_client=storage_client,
+            bucket_name=configured_bucket,
+        )
+    )
 
     bucket_name, _ = _split_gcs_uri(resolved_gcs_uri)
     if bucket_name != configured_bucket:
@@ -372,13 +438,11 @@ def transfer_gcs_to_google_drive(
             "The GCS URI bucket must match GCS_BUCKET_NAME."
         )
 
-    storage_client, drive_client = _create_clients()
-
     # -------------------------------------------------------------------------
     # Merge BigQuery CSV shards before uploading when configured.
     # -------------------------------------------------------------------------
 
-    if merge_gcs_shards:
+    if merge_gcs_shards and "*" in resolved_gcs_uri:
         blobs = [
             _merge_csv_shards(
                 storage_client=storage_client,
@@ -388,6 +452,12 @@ def transfer_gcs_to_google_drive(
             )
         ]
     else:
+        if merge_gcs_shards:
+            LOGGER.info(
+                "Using the exact GCS object because the URI is already "
+                "server-side composed: %s",
+                resolved_gcs_uri,
+            )
         blobs = _list_matching_blobs(storage_client, resolved_gcs_uri)
 
     # -------------------------------------------------------------------------
