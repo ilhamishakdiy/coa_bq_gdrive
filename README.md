@@ -262,3 +262,12 @@ With `DELETE_GCS_AFTER_DRIVE_UPLOAD=true`, the final uploaded CSV is deleted
 from GCS only after the Google Drive upload succeeds. If this is set to `false`,
 the final CSV stays in GCS and storage cost continues until the object is
 deleted.
+
+When the final GCS object is deleted, ongoing Cloud Storage capacity charges for
+that object stop from that point forward. Any charges already incurred before
+deletion can still apply, including Cloud Storage operation charges and any
+early deletion fees for Nearline, Coldline, or Archive storage classes.
+
+This design keeps the file processing outside the VM. In normal use, the
+temporary GCS storage cost is expected to be small compared with provisioning a
+larger VM just to download, merge, and upload large export files locally.
