@@ -1,4 +1,4 @@
-"""Run a parameterized manual BigQuery extract to Google Cloud Storage."""
+"""Run the scheduled previous-month BigQuery extract to Google Cloud Storage."""
 
 # =============================================================================
 # Standard library imports
@@ -40,8 +40,8 @@ if str(PYTHON_FILES_FOLDER) not in sys.path:
 from dotenv import load_dotenv
 from google import auth
 from google.api_core.exceptions import GoogleAPIError
-from google.cloud import bigquery, storage
 from google.oauth2 import service_account
+from google.cloud import bigquery, storage
 
 
 # =============================================================================
@@ -60,10 +60,11 @@ logging.basicConfig(
 # Constants
 # =============================================================================
 
-DEFAULT_MANUAL_SQL_PATH = PROJECT_ROOT / "sql" / "manual_run.sql"
-COUNTRY_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+DEFAULT_SCHEDULE_SQL_PATH = PROJECT_ROOT / "sql" / "schedule_prev_month.sql"
+SCHEDULE_EXPORT_NAME = "schedule_prev_month"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 MAXIMUM_COMPOSE_SOURCES = 32
+COUNTRY_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 # =============================================================================
@@ -190,28 +191,12 @@ def _validate_country_code(country_code: str) -> str:
     return normalized_country_code
 
 
-def _validate_year_id(year_id: int) -> int:
-    """Return a valid four-digit YEARID."""
-
-    if year_id < 1900 or year_id > 9999:
-        raise ValueError("YEARID must be a four-digit year.")
-    return year_id
-
-
-def _validate_month_id(month_id: int) -> int:
-    """Return a valid MONTHID value."""
-
-    if month_id < 1 or month_id > 12:
-        raise ValueError("MONTHID must be between 1 and 12.")
-    return month_id
-
-
 # =============================================================================
 # SQL template handling
 # =============================================================================
 
-def _read_manual_sql_template(sql_path: Path) -> str:
-    """Read the manual SQL template from disk."""
+def _read_schedule_sql_template(sql_path: Path) -> str:
+    """Read the scheduled previous-month SQL template from disk."""
 
     resolved_sql_path = sql_path.expanduser()
     if not resolved_sql_path.is_absolute():
@@ -219,64 +204,48 @@ def _read_manual_sql_template(sql_path: Path) -> str:
 
     if not resolved_sql_path.is_file():
         raise FileNotFoundError(
-            f"Manual SQL file was not found: {resolved_sql_path}"
+            f"Schedule SQL file was not found: {resolved_sql_path}"
         )
 
-    sql_template = resolved_sql_path.read_text(encoding="utf-8").strip()
-    if not sql_template:
-        raise ValueError(f"Manual SQL file is empty: {resolved_sql_path}")
+    sql_query = resolved_sql_path.read_text(encoding="utf-8").strip()
+    if not sql_query:
+        raise ValueError(f"Schedule SQL file is empty: {resolved_sql_path}")
 
-    return sql_template.rstrip(";")
+    return sql_query.rstrip(";")
 
 
-def _render_manual_sql(
+def _render_schedule_sql(
     country_code: str,
-    year_id: int,
-    month_id: int,
     sql_path: Path,
 ) -> str:
-    """Apply COUNTRYCODE, YEARID, and MONTHID to the SQL template."""
+    """Apply COUNTRYCODE to the scheduled previous-month SQL template."""
 
     safe_country_code = _validate_country_code(country_code)
-    safe_year_id = _validate_year_id(year_id)
-    safe_month_id = _validate_month_id(month_id)
-    sql_template = _read_manual_sql_template(sql_path)
+    sql_template = _read_schedule_sql_template(sql_path)
 
-    required_tokens = ("{COUNTRYCODE}", "{YEARID}", "{MONTHID}")
-    missing_tokens = [
-        token
-        for token in required_tokens
-        if token not in sql_template
-    ]
-    if missing_tokens:
+    if "{COUNTRYCODE}" not in sql_template:
         raise ValueError(
-            "Manual SQL template is missing required parameter token(s): "
-            f"{', '.join(missing_tokens)}"
+            "Schedule SQL template is missing required parameter token: "
+            "{COUNTRYCODE}"
         )
 
-    return sql_template.format(
-        COUNTRYCODE=safe_country_code,
-        YEARID=safe_year_id,
-        MONTHID=safe_month_id,
-    )
+    return sql_template.format(COUNTRYCODE=safe_country_code)
+
+
+# =============================================================================
+# Export naming
+# =============================================================================
+
+def _schedule_export_name(country_code: str) -> str:
+    """Build a stable export name that includes the country code."""
+
+    safe_country_code = _validate_country_code(country_code).lower()
+    return f"{SCHEDULE_EXPORT_NAME}_{safe_country_code}"
 
 
 # =============================================================================
 # BigQuery export and GCS URI helpers
 # =============================================================================
-
-def _manual_export_name(
-    country_code: str,
-    year_id: int,
-    month_id: int,
-) -> str:
-    """Build a stable export name that includes the manual-run parameters."""
-
-    safe_country_code = _validate_country_code(country_code).lower()
-    safe_year_id = _validate_year_id(year_id)
-    safe_month_id = _validate_month_id(month_id)
-    return f"manual_run_{safe_country_code}_{safe_year_id}_{safe_month_id:02d}"
-
 
 def _build_gcs_export_uri(
     bucket_name: str,
@@ -314,7 +283,9 @@ def _validate_gcs_export_uri(gcs_uri: str, expected_bucket: str) -> None:
 
     bucket_name, object_name = uri_match.groups()
     if bucket_name != expected_bucket:
-        raise ValueError("GCS_EXPORT_URI bucket must match GCS_BUCKET_NAME.")
+        raise ValueError(
+            "GCS_EXPORT_URI bucket must match GCS_BUCKET_NAME."
+        )
 
     if "*" not in object_name:
         raise ValueError("GCS_EXPORT_URI must contain a wildcard (*).")
@@ -563,16 +534,14 @@ def _compose_export_shards(
 
 
 # =============================================================================
-# Public manual export function
+# Public scheduled export function
 # =============================================================================
 
-def export_manual_bigquery_to_gcs(
+def export_schedule_bigquery_to_gcs(
     country_code: str,
-    year_id: int,
-    month_id: int,
-    sql_path: Path = DEFAULT_MANUAL_SQL_PATH,
+    sql_path: Path = DEFAULT_SCHEDULE_SQL_PATH,
 ) -> str:
-    """Export one manual parameterized BigQuery query to GCS."""
+    """Export the scheduled previous-month query to GCS."""
 
     # -------------------------------------------------------------------------
     # Load runtime configuration and create Google Cloud clients.
@@ -605,20 +574,14 @@ def export_manual_bigquery_to_gcs(
     )
 
     # -------------------------------------------------------------------------
-    # Render the SQL template and prepare the GCS export destination.
+    # Render the scheduled SQL and prepare the GCS export destination.
     # -------------------------------------------------------------------------
 
-    source_query = _render_manual_sql(
+    source_query = _render_schedule_sql(
         country_code=country_code,
-        year_id=year_id,
-        month_id=month_id,
         sql_path=sql_path,
     )
-    export_name = _manual_export_name(
-        country_code=country_code,
-        year_id=year_id,
-        month_id=month_id,
-    )
+    export_name = _schedule_export_name(country_code)
     csv_delimiter = _csv_delimiter()
     escaped_delimiter = csv_delimiter.replace("\\", "\\\\").replace("'", "\\'")
     run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -652,10 +615,9 @@ def export_manual_bigquery_to_gcs(
 
     try:
         LOGGER.info(
-            "Starting manual export for COUNTRYCODE=%s, YEARID=%s, MONTHID=%s",
+            "Starting scheduled previous-month export for COUNTRYCODE=%s to %s",
             _validate_country_code(country_code),
-            _validate_year_id(year_id),
-            _validate_month_id(month_id),
+            gcs_export_uri,
         )
         query_job = query_client.query(
             export_statement,
@@ -663,7 +625,7 @@ def export_manual_bigquery_to_gcs(
         )
         query_job.result()
         LOGGER.info(
-            "Manual export completed successfully. Job ID: %s",
+            "Scheduled export completed successfully. Job ID: %s",
             query_job.job_id,
         )
 
@@ -681,7 +643,7 @@ def export_manual_bigquery_to_gcs(
 
         return gcs_export_uri
     except GoogleAPIError:
-        LOGGER.exception("Manual BigQuery export failed.")
+        LOGGER.exception("Scheduled BigQuery export failed.")
         raise
 
 
@@ -690,12 +652,12 @@ def export_manual_bigquery_to_gcs(
 # =============================================================================
 
 def _parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse manual-run parameters from the command line."""
+    """Parse optional scheduled export arguments from the command line."""
 
     parser = argparse.ArgumentParser(
         description=(
-            "Export sql/manual_run.sql to GCS using COUNTRYCODE, YEARID, "
-            "and MONTHID parameters."
+            "Export sql/schedule_prev_month.sql to GCS using COUNTRYCODE. "
+            "Year and month are calculated by the SQL."
         )
     )
     parser.add_argument(
@@ -706,40 +668,22 @@ def _parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Country code to pass into {COUNTRYCODE}.",
     )
     parser.add_argument(
-        "--yearid",
-        "--year-id",
-        dest="year_id",
-        required=True,
-        type=int,
-        help="Year ID to pass into {YEARID}.",
-    )
-    parser.add_argument(
-        "--monthid",
-        "--month-id",
-        dest="month_id",
-        required=True,
-        type=int,
-        help="Month ID to pass into {MONTHID}.",
-    )
-    parser.add_argument(
         "--sql-path",
-        default=str(DEFAULT_MANUAL_SQL_PATH),
-        help="Path to the manual SQL template.",
+        default=str(DEFAULT_SCHEDULE_SQL_PATH),
+        help="Path to the scheduled previous-month SQL file.",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Run the manual export from command-line arguments."""
+    """Run the scheduled export from command-line arguments."""
 
     arguments = _parse_arguments(argv)
-    exported_uri = export_manual_bigquery_to_gcs(
+    exported_uri = export_schedule_bigquery_to_gcs(
         country_code=arguments.country_code,
-        year_id=arguments.year_id,
-        month_id=arguments.month_id,
         sql_path=Path(arguments.sql_path),
     )
-    LOGGER.info("Manual export GCS URI: %s", exported_uri)
+    LOGGER.info("Scheduled export GCS URI: %s", exported_uri)
 
 
 # =============================================================================

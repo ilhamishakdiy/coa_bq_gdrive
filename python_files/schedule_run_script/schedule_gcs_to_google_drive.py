@@ -1,4 +1,4 @@
-"""Transfer a manual GCS extract file to Google Drive."""
+"""Transfer a scheduled GCS extract file to Google Drive."""
 
 # =============================================================================
 # Standard library imports
@@ -26,7 +26,6 @@ from urllib.parse import quote
 
 SCRIPT_FOLDER = Path(__file__).resolve().parent
 PYTHON_FILES_FOLDER = SCRIPT_FOLDER.parent
-PROJECT_ROOT = PYTHON_FILES_FOLDER.parent
 
 if str(PYTHON_FILES_FOLDER) not in sys.path:
     sys.path.insert(0, str(PYTHON_FILES_FOLDER))
@@ -50,6 +49,7 @@ from googleapiclient.http import MediaIoBaseUpload
 # =============================================================================
 
 LOGGER = logging.getLogger(__name__)
+PROJECT_ROOT = PYTHON_FILES_FOLDER.parent
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -308,10 +308,10 @@ def _discover_latest_merged_gcs_uri(
 # Public transfer function
 # =============================================================================
 
-def transfer_manual_gcs_to_google_drive(
+def transfer_schedule_gcs_to_google_drive(
     gcs_uri: str | None = None,
 ) -> list[dict[str, str]]:
-    """Transfer a manual GCS export URI to Google Drive."""
+    """Transfer a scheduled GCS export URI to Google Drive."""
 
     # -------------------------------------------------------------------------
     # Resolve an explicit URI before discovering the latest merged GCS object.
@@ -418,7 +418,7 @@ def transfer_manual_gcs_to_google_drive(
             raise
 
     LOGGER.info(
-        "Manual GCS to Google Drive transfer completed. Uploaded files: %d",
+        "Scheduled GCS to Google Drive transfer completed. Uploaded files: %d",
         len(uploaded_files),
     )
     return uploaded_files
@@ -429,12 +429,12 @@ def transfer_manual_gcs_to_google_drive(
 # =============================================================================
 
 def _parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse the optional manual GCS URI from the command line."""
+    """Parse the optional scheduled GCS URI from the command line."""
 
     parser = argparse.ArgumentParser(
         description=(
-            "Upload a manual GCS extract file to the configured Google Drive "
-            "folder."
+            "Upload a scheduled GCS extract file to the configured Google "
+            "Drive folder."
         )
     )
     parser.add_argument(
@@ -449,13 +449,13 @@ def _parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Run the manual GCS-to-Google-Drive transfer."""
+    """Run the scheduled GCS-to-Google-Drive transfer."""
 
     arguments = _parse_arguments(argv)
-    uploaded_files = transfer_manual_gcs_to_google_drive(arguments.gcs_uri)
+    uploaded_files = transfer_schedule_gcs_to_google_drive(arguments.gcs_uri)
 
     # -------------------------------------------------------------------------
-    # Log each uploaded Drive file for easy manual-run tracking.
+    # Log each uploaded Drive file for scheduled-run tracking.
     # -------------------------------------------------------------------------
 
     for uploaded_file in uploaded_files:
