@@ -44,6 +44,15 @@ Run both:
 python python_files\schedule_run_script\schedule_execute_export_flow.py --countrycode BD
 ```
 
+Run both for every country code in a file:
+
+```powershell
+python python_files\schedule_run_script\schedule_execute_export_flow.py --country-code-file config\schedule_country_codes.txt
+```
+
+The country-code file supports one country code per line, comments with `#`,
+blank lines, and comma-separated values.
+
 <!-- ====================================================================== -->
 <!-- Notes                                                                  -->
 <!-- ====================================================================== -->
