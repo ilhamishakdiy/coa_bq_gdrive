@@ -342,6 +342,31 @@ def _split_gcs_uri(gcs_uri: str) -> tuple[str, str]:
     return uri_match.group(1), uri_match.group(2)
 
 
+def _clear_gcs_export_folder(
+    storage_client: storage.Client,
+    gcs_export_uri: str,
+) -> None:
+    """Delete existing objects from the resolved BigQuery shard folder."""
+
+    bucket_name, wildcard_object_name = _split_gcs_uri(gcs_export_uri)
+    export_folder = Path(wildcard_object_name).parent.as_posix()
+    if export_folder in {"", "."}:
+        raise ValueError("Refusing to clear the root of the GCS bucket.")
+
+    export_prefix = f"{export_folder.rstrip('/')}/"
+    deleted_count = 0
+    for blob in storage_client.list_blobs(bucket_name, prefix=export_prefix):
+        blob.delete()
+        deleted_count += 1
+
+    LOGGER.info(
+        "Cleared %d existing GCS shard object(s) under gs://%s/%s",
+        deleted_count,
+        bucket_name,
+        export_prefix,
+    )
+
+
 def _build_composed_object_name(wildcard_object_name: str) -> str:
     """Build the final CSV object name under the configured merged prefix."""
 
@@ -642,7 +667,7 @@ def export_schedule_bigquery_to_gcs(
     escaped_uri = gcs_export_uri.replace("\\", "\\\\").replace("'", "\\'")
 
     # -------------------------------------------------------------------------
-    # Run BigQuery EXPORT DATA and write CSV shards into Cloud Storage.
+    # Clear the shard folder, then export fresh BigQuery CSV shards to GCS.
     # -------------------------------------------------------------------------
 
     csv_header = _build_csv_header(
@@ -651,12 +676,16 @@ def export_schedule_bigquery_to_gcs(
         csv_delimiter=csv_delimiter,
         bigquery_location=bigquery_location,
     )
+    _clear_gcs_export_folder(
+        storage_client=storage_client,
+        gcs_export_uri=gcs_export_uri,
+    )
     export_statement = f"""
         EXPORT DATA OPTIONS (
             uri = '{escaped_uri}',
             format = 'CSV',
             field_delimiter = '{escaped_delimiter}',
-            overwrite = false,
+            overwrite = true,
             header = false
         ) AS
         {source_query}

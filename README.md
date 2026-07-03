@@ -82,6 +82,8 @@ STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>.csv
 
 Raw GCS export shards use the timestamped GCS filename stem with a BigQuery
 wildcard suffix while they are waiting to be composed.
+The resolved GCS shard folder is cleared after query validation and before each
+BigQuery export starts.
 
 `MONTHID` is always two digits. Values `1` to `9` become `01` to `09`;
 values `10` to `12` stay as `10` to `12`.
@@ -108,7 +110,13 @@ python python_files\manual_run_script\manual_bigquery_to_gcs.py --countrycode BD
 Run GCS to Google Drive only:
 
 ```powershell
-python python_files\manual_run_script\manual_gcs_to_google_drive.py --gcs-uri gs://your-bucket/path/file.csv
+python python_files\manual_run_script\manual_gcs_to_google_drive.py --countrycode BD --yearid 2026 --monthid 6
+```
+
+To upload a specific GCS object instead of the latest merged file:
+
+```powershell
+python python_files\manual_run_script\manual_gcs_to_google_drive.py --gcs-uri gs://your-bucket/path/file.csv --countrycode BD --yearid 2026 --monthid 6
 ```
 
 Run both:
@@ -132,7 +140,13 @@ python python_files\schedule_run_script\schedule_bigquery_to_gcs.py --countrycod
 Run GCS to Google Drive only:
 
 ```powershell
-python python_files\schedule_run_script\schedule_gcs_to_google_drive.py --gcs-uri gs://your-bucket/path/file.csv
+python python_files\schedule_run_script\schedule_gcs_to_google_drive.py --countrycode BD
+```
+
+To upload a specific GCS object instead of the latest merged file:
+
+```powershell
+python python_files\schedule_run_script\schedule_gcs_to_google_drive.py --gcs-uri gs://your-bucket/path/file.csv --countrycode BD
 ```
 
 Run both:
