@@ -73,7 +73,10 @@ def execute_schedule_export_flow(
     # Upload the exported GCS object to the configured Google Drive folder.
     # -------------------------------------------------------------------------
 
-    uploaded_files = transfer_schedule_gcs_to_google_drive(exported_gcs_uri)
+    uploaded_files = transfer_schedule_gcs_to_google_drive(
+        gcs_uri=exported_gcs_uri,
+        country_code=country_code,
+    )
     for uploaded_file in uploaded_files:
         LOGGER.info(
             "Scheduled flow uploaded %s to Google Drive: %s",

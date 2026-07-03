@@ -13,7 +13,7 @@ import mimetypes
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from typing import Sequence
@@ -66,6 +66,8 @@ GOOGLE_SCOPES = (
     "https://www.googleapis.com/auth/drive",
 )
 MINIMUM_UPLOAD_CHUNK_SIZE = 256 * 1024
+COUNTRY_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 
 # =============================================================================
@@ -140,6 +142,50 @@ def _stream_chunk_size() -> int:
         )
 
     return chunk_size
+
+
+# =============================================================================
+# Parameter validation
+# =============================================================================
+
+def _validate_country_code(country_code: str) -> str:
+    """Return a safe country code for Drive folder and file naming."""
+
+    normalized_country_code = country_code.strip().upper()
+    if not normalized_country_code:
+        raise ValueError("COUNTRYCODE cannot be empty.")
+
+    if not COUNTRY_CODE_PATTERN.fullmatch(normalized_country_code):
+        raise ValueError(
+            "COUNTRYCODE may contain only letters, numbers, underscores, "
+            "and hyphens."
+        )
+
+    return normalized_country_code
+
+
+def _validate_year_id(year_id: int) -> int:
+    """Return a valid four-digit YEARID."""
+
+    if year_id < 1900 or year_id > 9999:
+        raise ValueError("YEARID must be a four-digit year.")
+    return year_id
+
+
+def _validate_month_id(month_id: int) -> int:
+    """Return a valid MONTHID value."""
+
+    if month_id < 1 or month_id > 12:
+        raise ValueError("MONTHID must be between 1 and 12.")
+    return month_id
+
+
+def _previous_month_period(reference_date: date | None = None) -> tuple[int, int]:
+    """Return YEARID and MONTHID for the previous calendar month."""
+
+    current_date = reference_date or datetime.now(timezone.utc).date()
+    previous_month_date = current_date.replace(day=1) - timedelta(days=1)
+    return previous_month_date.year, previous_month_date.month
 
 
 # =============================================================================
@@ -305,11 +351,143 @@ def _discover_latest_merged_gcs_uri(
 
 
 # =============================================================================
+# Google Drive helpers
+# =============================================================================
+
+def _drive_query_literal(value: str) -> str:
+    """Escape a string value for a Google Drive query literal."""
+
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _find_or_create_drive_folder(
+    drive_client: Any,
+    parent_folder_id: str,
+    folder_name: str,
+) -> str:
+    """Return a child Drive folder ID, creating the folder when needed."""
+
+    escaped_parent_id = _drive_query_literal(parent_folder_id)
+    escaped_folder_name = _drive_query_literal(folder_name)
+    query = (
+        f"name = '{escaped_folder_name}' "
+        f"and mimeType = '{DRIVE_FOLDER_MIME_TYPE}' "
+        f"and '{escaped_parent_id}' in parents "
+        "and trashed = false"
+    )
+    folder_response = (
+        drive_client.files()
+        .list(
+            q=query,
+            spaces="drive",
+            fields="files(id,name)",
+            pageSize=10,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        )
+        .execute()
+    )
+    existing_folders = folder_response.get("files", [])
+
+    # -------------------------------------------------------------------------
+    # Reuse the first matching folder to keep reruns idempotent.
+    # -------------------------------------------------------------------------
+
+    if existing_folders:
+        if len(existing_folders) > 1:
+            LOGGER.warning(
+                "Multiple Drive folders named %s were found. Using %s.",
+                folder_name,
+                existing_folders[0]["id"],
+            )
+        return existing_folders[0]["id"]
+
+    # -------------------------------------------------------------------------
+    # Create the country folder under the configured parent Drive folder.
+    # -------------------------------------------------------------------------
+
+    created_folder = (
+        drive_client.files()
+        .create(
+            body={
+                "name": folder_name,
+                "mimeType": DRIVE_FOLDER_MIME_TYPE,
+                "parents": [parent_folder_id],
+            },
+            fields="id",
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+    LOGGER.info("Created Google Drive folder %s: %s", folder_name, created_folder["id"])
+    return created_folder["id"]
+
+
+def _build_drive_file_name(
+    country_code: str,
+    year_id: int,
+    month_id: int,
+) -> str:
+    """Build the final Google Drive CSV filename."""
+
+    safe_country_code = _validate_country_code(country_code)
+    safe_year_id = _validate_year_id(year_id)
+    safe_month_id = _validate_month_id(month_id)
+    return (
+        "STORE_SKU_SALES_MONTH_"
+        f"{safe_country_code}_{safe_month_id:02d}{safe_year_id}.csv"
+    )
+
+
+def _resolve_drive_destination(
+    drive_client: Any,
+    parent_folder_id: str,
+    country_code: str | None,
+    year_id: int | None,
+    month_id: int | None,
+) -> tuple[str, str | None]:
+    """Return the target Drive folder and optional final filename."""
+
+    if country_code is None and year_id is None and month_id is None:
+        return parent_folder_id, None
+
+    if country_code is None:
+        raise ValueError(
+            "COUNTRYCODE is required when overriding the scheduled Google "
+            "Drive folder and filename."
+        )
+
+    if year_id is None and month_id is None:
+        year_id, month_id = _previous_month_period()
+    elif year_id is None or month_id is None:
+        raise ValueError(
+            "YEARID and MONTHID must be provided together for scheduled "
+            "Google Drive filename overrides."
+        )
+
+    safe_country_code = _validate_country_code(country_code)
+    country_folder_id = _find_or_create_drive_folder(
+        drive_client=drive_client,
+        parent_folder_id=parent_folder_id,
+        folder_name=safe_country_code,
+    )
+    drive_file_name = _build_drive_file_name(
+        country_code=safe_country_code,
+        year_id=year_id,
+        month_id=month_id,
+    )
+    return country_folder_id, drive_file_name
+
+
+# =============================================================================
 # Public transfer function
 # =============================================================================
 
 def transfer_schedule_gcs_to_google_drive(
     gcs_uri: str | None = None,
+    country_code: str | None = None,
+    year_id: int | None = None,
+    month_id: int | None = None,
 ) -> list[dict[str, str]]:
     """Transfer a scheduled GCS export URI to Google Drive."""
 
@@ -338,13 +516,21 @@ def transfer_schedule_gcs_to_google_drive(
     if bucket_name != configured_bucket:
         raise ValueError("The GCS URI bucket must match GCS_BUCKET_NAME.")
 
+    target_drive_folder_id, target_file_name = _resolve_drive_destination(
+        drive_client=drive_client,
+        parent_folder_id=drive_folder_id,
+        country_code=country_code,
+        year_id=year_id,
+        month_id=month_id,
+    )
+
     # -------------------------------------------------------------------------
     # Stream each resolved GCS object directly into a resumable Drive upload.
     # -------------------------------------------------------------------------
 
     uploaded_files: list[dict[str, str]] = []
     for blob in _list_matching_blobs(storage_client, resolved_gcs_uri):
-        file_name = Path(blob.name).name
+        file_name = target_file_name or Path(blob.name).name
         mime_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
 
         try:
@@ -369,7 +555,7 @@ def transfer_schedule_gcs_to_google_drive(
                     .create(
                         body={
                             "name": file_name,
-                            "parents": [drive_folder_id],
+                            "parents": [target_drive_folder_id],
                         },
                         media_body=media,
                         fields="id,name,webViewLink",
@@ -392,6 +578,7 @@ def transfer_schedule_gcs_to_google_drive(
                 {
                     "gcs_uri": f"gs://{bucket_name}/{blob.name}",
                     "drive_file_id": drive_file_id,
+                    "drive_file_name": file_name,
                     "drive_url": drive_url,
                 }
             )
@@ -445,6 +632,35 @@ def _parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "GCS_DRIVE_SOURCE_URI/latest merged-object fallback is used."
         ),
     )
+    parser.add_argument(
+        "--countrycode",
+        "--country-code",
+        dest="country_code",
+        default=None,
+        help="Country code used for the Drive child folder and final filename.",
+    )
+    parser.add_argument(
+        "--yearid",
+        "--year-id",
+        dest="year_id",
+        default=None,
+        type=int,
+        help=(
+            "Optional year ID used for the final Drive filename. When omitted "
+            "with MONTHID, the previous calendar month is used."
+        ),
+    )
+    parser.add_argument(
+        "--monthid",
+        "--month-id",
+        dest="month_id",
+        default=None,
+        type=int,
+        help=(
+            "Optional month ID used for the final Drive filename. When omitted "
+            "with YEARID, the previous calendar month is used."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -452,7 +668,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Run the scheduled GCS-to-Google-Drive transfer."""
 
     arguments = _parse_arguments(argv)
-    uploaded_files = transfer_schedule_gcs_to_google_drive(arguments.gcs_uri)
+    uploaded_files = transfer_schedule_gcs_to_google_drive(
+        gcs_uri=arguments.gcs_uri,
+        country_code=arguments.country_code,
+        year_id=arguments.year_id,
+        month_id=arguments.month_id,
+    )
 
     # -------------------------------------------------------------------------
     # Log each uploaded Drive file for scheduled-run tracking.

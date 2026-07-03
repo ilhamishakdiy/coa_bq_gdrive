@@ -251,9 +251,11 @@ def _build_gcs_export_uri(
     bucket_name: str,
     export_name: str,
     run_timestamp: str,
+    country_code: str,
 ) -> str:
     """Return the configured URI or generate a timestamped wildcard URI."""
 
+    safe_country_code = _validate_country_code(country_code)
     configured_uri = _optional_environment_value("GCS_EXPORT_URI")
     if configured_uri:
         _validate_gcs_export_uri(configured_uri, bucket_name)
@@ -269,7 +271,7 @@ def _build_gcs_export_uri(
 
     object_name = f"{file_name}_{export_name}_{run_timestamp}_*.csv"
     object_path = "/".join(
-        part for part in (object_prefix, object_name) if part
+        part for part in (object_prefix, safe_country_code, object_name) if part
     )
     return f"gs://{bucket_name}/{object_path}"
 
@@ -308,6 +310,8 @@ def _build_composed_object_name(wildcard_object_name: str) -> str:
         "GCS_MERGED_OBJECT_PREFIX",
         "exports/bigquery_merged",
     ).strip("/")
+    source_parent = Path(wildcard_object_name).parent
+    country_folder = source_parent.name
     source_file_name = Path(wildcard_object_name).name
 
     # -------------------------------------------------------------------------
@@ -321,7 +325,7 @@ def _build_composed_object_name(wildcard_object_name: str) -> str:
 
     return "/".join(
         part
-        for part in (destination_prefix, composed_file_name)
+        for part in (destination_prefix, country_folder, composed_file_name)
         if part
     )
 
@@ -589,6 +593,7 @@ def export_schedule_bigquery_to_gcs(
         bucket_name=bucket_name,
         export_name=export_name,
         run_timestamp=run_timestamp,
+        country_code=country_code,
     )
     escaped_uri = gcs_export_uri.replace("\\", "\\\\").replace("'", "\\'")
 

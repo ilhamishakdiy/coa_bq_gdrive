@@ -77,7 +77,12 @@ def execute_manual_export_flow(
     # Upload the exported GCS object to the configured Google Drive folder.
     # -------------------------------------------------------------------------
 
-    uploaded_files = transfer_manual_gcs_to_google_drive(exported_gcs_uri)
+    uploaded_files = transfer_manual_gcs_to_google_drive(
+        gcs_uri=exported_gcs_uri,
+        country_code=country_code,
+        year_id=year_id,
+        month_id=month_id,
+    )
     for uploaded_file in uploaded_files:
         LOGGER.info(
             "Manual flow uploaded %s to Google Drive: %s",

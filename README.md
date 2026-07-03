@@ -42,6 +42,48 @@ COMPOSE_GCS_SHARDS=true
 ```
 
 <!-- ====================================================================== -->
+<!-- Output folder and filename                                             -->
+<!-- ====================================================================== -->
+
+## Output Folder And Filename
+
+Each country uses its own folder in GCS and Google Drive.
+
+GCS raw export shards are written under:
+
+```text
+gs://<GCS_BUCKET_NAME>/<GCS_OBJECT_PREFIX>/<COUNTRYCODE>/
+```
+
+GCS composed CSV files are written under:
+
+```text
+gs://<GCS_BUCKET_NAME>/<GCS_MERGED_OBJECT_PREFIX>/<COUNTRYCODE>/
+```
+
+Google Drive uploads go into a child folder named by country code under
+`DRIVE_FOLDER_ID`:
+
+```text
+<DRIVE_FOLDER_ID>/<COUNTRYCODE>/
+```
+
+The Google Drive CSV filename format is:
+
+```text
+STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>.csv
+```
+
+`MONTHID` is always two digits. Values `1` to `9` become `01` to `09`;
+values `10` to `12` stay as `10` to `12`.
+
+Example for `COUNTRYCODE=BD`, `MONTHID=6`, and `YEARID=2026`:
+
+```text
+BD/STORE_SKU_SALES_MONTH_BD_062026.csv
+```
+
+<!-- ====================================================================== -->
 <!-- Manual run                                                             -->
 <!-- ====================================================================== -->
 
