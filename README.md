@@ -52,13 +52,13 @@ Each country uses its own folder in GCS and Google Drive.
 GCS raw export shards are written under:
 
 ```text
-gs://<GCS_BUCKET_NAME>/<GCS_OBJECT_PREFIX>/<COUNTRYCODE>/
+gs://<GCS_BUCKET_NAME>/<GCS_OBJECT_PREFIX>/<COUNTRYCODE>/STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>_<TIMESTAMP>_*.csv
 ```
 
 GCS composed CSV files are written under:
 
 ```text
-gs://<GCS_BUCKET_NAME>/<GCS_MERGED_OBJECT_PREFIX>/<COUNTRYCODE>/
+gs://<GCS_BUCKET_NAME>/<GCS_MERGED_OBJECT_PREFIX>/<COUNTRYCODE>/STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>_<TIMESTAMP>.csv
 ```
 
 Google Drive uploads go into a child folder named by country code under
@@ -68,11 +68,20 @@ Google Drive uploads go into a child folder named by country code under
 <DRIVE_FOLDER_ID>/<COUNTRYCODE>/
 ```
 
+The GCS composed CSV filename format is:
+
+```text
+STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>_<TIMESTAMP>.csv
+```
+
 The Google Drive CSV filename format is:
 
 ```text
 STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>.csv
 ```
+
+Raw GCS export shards use the timestamped GCS filename stem with a BigQuery
+wildcard suffix while they are waiting to be composed.
 
 `MONTHID` is always two digits. Values `1` to `9` become `01` to `09`;
 values `10` to `12` stay as `10` to `12`.
@@ -80,7 +89,8 @@ values `10` to `12` stay as `10` to `12`.
 Example for `COUNTRYCODE=BD`, `MONTHID=6`, and `YEARID=2026`:
 
 ```text
-BD/STORE_SKU_SALES_MONTH_BD_062026.csv
+Google Drive: BD/STORE_SKU_SALES_MONTH_BD_062026.csv
+GCS composed: BD/STORE_SKU_SALES_MONTH_BD_062026_20260703T120000Z.csv
 ```
 
 <!-- ====================================================================== -->

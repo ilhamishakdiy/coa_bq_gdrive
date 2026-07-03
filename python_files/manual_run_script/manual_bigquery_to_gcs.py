@@ -265,42 +265,52 @@ def _render_manual_sql(
 # BigQuery export and GCS URI helpers
 # =============================================================================
 
-def _manual_export_name(
+def _build_bucket_file_name(
     country_code: str,
     year_id: int,
     month_id: int,
+    run_timestamp: str,
 ) -> str:
-    """Build a stable export name that includes the manual-run parameters."""
+    """Build the timestamped CSV filename used in the GCS bucket."""
 
-    safe_country_code = _validate_country_code(country_code).lower()
+    safe_country_code = _validate_country_code(country_code)
     safe_year_id = _validate_year_id(year_id)
     safe_month_id = _validate_month_id(month_id)
-    return f"manual_run_{safe_country_code}_{safe_year_id}_{safe_month_id:02d}"
+    return (
+        "STORE_SKU_SALES_MONTH_"
+        f"{safe_country_code}_{safe_month_id:02d}{safe_year_id}_"
+        f"{run_timestamp}.csv"
+    )
 
 
 def _build_gcs_export_uri(
     bucket_name: str,
-    export_name: str,
-    run_timestamp: str,
+    bucket_file_name: str,
     country_code: str,
 ) -> str:
-    """Return the configured URI or generate a timestamped wildcard URI."""
+    """Return the configured URI or generate a Drive-compatible wildcard URI."""
 
     safe_country_code = _validate_country_code(country_code)
+    bucket_file_stem = Path(bucket_file_name).stem
     configured_uri = _optional_environment_value("GCS_EXPORT_URI")
     if configured_uri:
         _validate_gcs_export_uri(configured_uri, bucket_name)
-        return configured_uri.replace("*", f"{export_name}_*", 1)
+        _, configured_object_name = _split_gcs_uri(configured_uri)
+        configured_parent = Path(configured_object_name).parent.as_posix()
+        configured_prefix = "" if configured_parent == "." else configured_parent
+        configured_object_path = "/".join(
+            part
+            for part in (configured_prefix, f"{bucket_file_stem}_*.csv")
+            if part
+        )
+        return f"gs://{bucket_name}/{configured_object_path}"
 
     object_prefix = os.getenv(
         "GCS_OBJECT_PREFIX",
         "exports/bigquery",
     ).strip("/")
-    file_name = os.getenv("EXPORT_FILE_NAME", "bigquery_export").strip()
-    if not file_name:
-        raise ValueError("EXPORT_FILE_NAME cannot be empty.")
 
-    object_name = f"{file_name}_{export_name}_{run_timestamp}_*.csv"
+    object_name = f"{bucket_file_stem}_*.csv"
     object_path = "/".join(
         part for part in (object_prefix, safe_country_code, object_name) if part
     )
@@ -618,18 +628,18 @@ def export_manual_bigquery_to_gcs(
         month_id=month_id,
         sql_path=sql_path,
     )
-    export_name = _manual_export_name(
+    run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    bucket_file_name = _build_bucket_file_name(
         country_code=country_code,
         year_id=year_id,
         month_id=month_id,
+        run_timestamp=run_timestamp,
     )
     csv_delimiter = _csv_delimiter()
     escaped_delimiter = csv_delimiter.replace("\\", "\\\\").replace("'", "\\'")
-    run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     gcs_export_uri = _build_gcs_export_uri(
         bucket_name=bucket_name,
-        export_name=export_name,
-        run_timestamp=run_timestamp,
+        bucket_file_name=bucket_file_name,
         country_code=country_code,
     )
     escaped_uri = gcs_export_uri.replace("\\", "\\\\").replace("'", "\\'")

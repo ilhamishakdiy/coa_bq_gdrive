@@ -14,7 +14,7 @@ import logging
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from typing import Sequence
@@ -61,7 +61,6 @@ logging.basicConfig(
 # =============================================================================
 
 DEFAULT_SCHEDULE_SQL_PATH = PROJECT_ROOT / "sql" / "schedule_prev_month.sql"
-SCHEDULE_EXPORT_NAME = "schedule_prev_month"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 MAXIMUM_COMPOSE_SOURCES = 32
 COUNTRY_CODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -191,6 +190,30 @@ def _validate_country_code(country_code: str) -> str:
     return normalized_country_code
 
 
+def _validate_year_id(year_id: int) -> int:
+    """Return a valid four-digit YEARID."""
+
+    if year_id < 1900 or year_id > 9999:
+        raise ValueError("YEARID must be a four-digit year.")
+    return year_id
+
+
+def _validate_month_id(month_id: int) -> int:
+    """Return a valid MONTHID value."""
+
+    if month_id < 1 or month_id > 12:
+        raise ValueError("MONTHID must be between 1 and 12.")
+    return month_id
+
+
+def _previous_month_period(reference_date: date | None = None) -> tuple[int, int]:
+    """Return the year and month for the previous calendar month."""
+
+    current_date = reference_date or date.today()
+    previous_month_date = current_date.replace(day=1) - timedelta(days=1)
+    return previous_month_date.year, previous_month_date.month
+
+
 # =============================================================================
 # SQL template handling
 # =============================================================================
@@ -236,11 +259,22 @@ def _render_schedule_sql(
 # Export naming
 # =============================================================================
 
-def _schedule_export_name(country_code: str) -> str:
-    """Build a stable export name that includes the country code."""
+def _build_bucket_file_name(
+    country_code: str,
+    year_id: int,
+    month_id: int,
+    run_timestamp: str,
+) -> str:
+    """Build the timestamped CSV filename used in the GCS bucket."""
 
-    safe_country_code = _validate_country_code(country_code).lower()
-    return f"{SCHEDULE_EXPORT_NAME}_{safe_country_code}"
+    safe_country_code = _validate_country_code(country_code)
+    safe_year_id = _validate_year_id(year_id)
+    safe_month_id = _validate_month_id(month_id)
+    return (
+        "STORE_SKU_SALES_MONTH_"
+        f"{safe_country_code}_{safe_month_id:02d}{safe_year_id}_"
+        f"{run_timestamp}.csv"
+    )
 
 
 # =============================================================================
@@ -249,27 +283,32 @@ def _schedule_export_name(country_code: str) -> str:
 
 def _build_gcs_export_uri(
     bucket_name: str,
-    export_name: str,
-    run_timestamp: str,
+    bucket_file_name: str,
     country_code: str,
 ) -> str:
-    """Return the configured URI or generate a timestamped wildcard URI."""
+    """Return the configured URI or generate a Drive-compatible wildcard URI."""
 
     safe_country_code = _validate_country_code(country_code)
+    bucket_file_stem = Path(bucket_file_name).stem
     configured_uri = _optional_environment_value("GCS_EXPORT_URI")
     if configured_uri:
         _validate_gcs_export_uri(configured_uri, bucket_name)
-        return configured_uri.replace("*", f"{export_name}_*", 1)
+        _, configured_object_name = _split_gcs_uri(configured_uri)
+        configured_parent = Path(configured_object_name).parent.as_posix()
+        configured_prefix = "" if configured_parent == "." else configured_parent
+        configured_object_path = "/".join(
+            part
+            for part in (configured_prefix, f"{bucket_file_stem}_*.csv")
+            if part
+        )
+        return f"gs://{bucket_name}/{configured_object_path}"
 
     object_prefix = os.getenv(
         "GCS_OBJECT_PREFIX",
         "exports/bigquery",
     ).strip("/")
-    file_name = os.getenv("EXPORT_FILE_NAME", "bigquery_export").strip()
-    if not file_name:
-        raise ValueError("EXPORT_FILE_NAME cannot be empty.")
 
-    object_name = f"{file_name}_{export_name}_{run_timestamp}_*.csv"
+    object_name = f"{bucket_file_stem}_*.csv"
     object_path = "/".join(
         part for part in (object_prefix, safe_country_code, object_name) if part
     )
@@ -585,14 +624,19 @@ def export_schedule_bigquery_to_gcs(
         country_code=country_code,
         sql_path=sql_path,
     )
-    export_name = _schedule_export_name(country_code)
+    year_id, month_id = _previous_month_period()
+    run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    bucket_file_name = _build_bucket_file_name(
+        country_code=country_code,
+        year_id=year_id,
+        month_id=month_id,
+        run_timestamp=run_timestamp,
+    )
     csv_delimiter = _csv_delimiter()
     escaped_delimiter = csv_delimiter.replace("\\", "\\\\").replace("'", "\\'")
-    run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     gcs_export_uri = _build_gcs_export_uri(
         bucket_name=bucket_name,
-        export_name=export_name,
-        run_timestamp=run_timestamp,
+        bucket_file_name=bucket_file_name,
         country_code=country_code,
     )
     escaped_uri = gcs_export_uri.replace("\\", "\\\\").replace("'", "\\'")
