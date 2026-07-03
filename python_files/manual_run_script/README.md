@@ -26,16 +26,10 @@ BigQuery to GCS:
 python python_files\manual_run_script\manual_bigquery_to_gcs.py --countrycode BD --yearid 2026 --monthid 6
 ```
 
-GCS to Google Drive:
+Latest merged GCS file to Google Drive:
 
 ```powershell
 python python_files\manual_run_script\manual_gcs_to_google_drive.py --countrycode BD --yearid 2026 --monthid 6
-```
-
-GCS to Google Drive with a specific object:
-
-```powershell
-python python_files\manual_run_script\manual_gcs_to_google_drive.py --gcs-uri gs://your-bucket/path/file.csv --countrycode BD --yearid 2026 --monthid 6
 ```
 
 Run both:

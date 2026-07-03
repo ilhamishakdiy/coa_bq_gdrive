@@ -107,16 +107,10 @@ Run BigQuery to GCS only:
 python python_files\manual_run_script\manual_bigquery_to_gcs.py --countrycode BD --yearid 2026 --monthid 6
 ```
 
-Run GCS to Google Drive only:
+Run latest merged GCS file to Google Drive only:
 
 ```powershell
 python python_files\manual_run_script\manual_gcs_to_google_drive.py --countrycode BD --yearid 2026 --monthid 6
-```
-
-To upload a specific GCS object instead of the latest merged file:
-
-```powershell
-python python_files\manual_run_script\manual_gcs_to_google_drive.py --gcs-uri gs://your-bucket/path/file.csv --countrycode BD --yearid 2026 --monthid 6
 ```
 
 Run both:
@@ -137,16 +131,10 @@ Run BigQuery to GCS only:
 python python_files\schedule_run_script\schedule_bigquery_to_gcs.py --countrycode BD
 ```
 
-Run GCS to Google Drive only:
+Run latest merged GCS file to Google Drive only:
 
 ```powershell
 python python_files\schedule_run_script\schedule_gcs_to_google_drive.py --countrycode BD
-```
-
-To upload a specific GCS object instead of the latest merged file:
-
-```powershell
-python python_files\schedule_run_script\schedule_gcs_to_google_drive.py --gcs-uri gs://your-bucket/path/file.csv --countrycode BD
 ```
 
 Run both:

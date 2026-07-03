@@ -26,16 +26,10 @@ BigQuery to GCS:
 python python_files\schedule_run_script\schedule_bigquery_to_gcs.py --countrycode BD
 ```
 
-GCS to Google Drive:
+Latest merged GCS file to Google Drive:
 
 ```powershell
 python python_files\schedule_run_script\schedule_gcs_to_google_drive.py --countrycode BD
-```
-
-GCS to Google Drive with a specific object:
-
-```powershell
-python python_files\schedule_run_script\schedule_gcs_to_google_drive.py --gcs-uri gs://your-bucket/path/file.csv --countrycode BD
 ```
 
 Run both:
