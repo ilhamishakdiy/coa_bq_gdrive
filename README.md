@@ -109,6 +109,20 @@ Run BigQuery to GCS only:
 python python_files\manual_run_script\manual_bigquery_to_gcs.py --countrycode BD --yearid 2026 --monthid 6
 ```
 
+Run BigQuery to GCS only and append output to the VM log file:
+
+```bash
+# =============================================================================
+# Manual BigQuery to GCS run with log append
+# =============================================================================
+
+python python_files/manual_run_script/manual_bigquery_to_gcs.py \
+  --countrycode BN \
+  --yearid 2026 \
+  --monthid 4 \
+  >> /opt/itsd/logs/coa_bq_gcs_gdrive.log 2>&1
+```
+
 Run latest merged GCS file to Google Drive only:
 
 ```powershell
