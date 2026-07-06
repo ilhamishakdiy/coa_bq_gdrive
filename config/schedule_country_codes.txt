@@ -4,8 +4,18 @@
 #
 # Use one country code per line. Blank lines and comments are ignored.
 
+ZA
+VN
+TR
 TH
+SG
+RO
+PL
 PH
-ID
-BD
+MY
+KH
 IN
+ID
+ES
+BN
+BD
