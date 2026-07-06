@@ -36,6 +36,10 @@ from manual_run_script.manual_bigquery_to_gcs import (
 from manual_run_script.manual_gcs_to_google_drive import (
     transfer_manual_gcs_to_google_drive,
 )
+from lark_notification import FAILED_STATUS
+from lark_notification import SUCCESS_STATUS
+from lark_notification import PipelineRunRecord
+from lark_notification import send_lark_pipeline_notification
 
 
 # =============================================================================
@@ -61,36 +65,64 @@ def execute_manual_export_flow(
 ) -> list[dict[str, str]]:
     """Run the manual export, then upload the exported GCS file to Drive."""
 
-    # -------------------------------------------------------------------------
-    # Export the parameterized BigQuery query and capture the final GCS URI.
-    # -------------------------------------------------------------------------
+    bq_to_gcs_status = FAILED_STATUS
+    gcs_to_gdrive_status = FAILED_STATUS
+    error_reason = "-"
 
-    exported_gcs_uri = export_manual_bigquery_to_gcs(
-        country_code=country_code,
-        year_id=year_id,
-        month_id=month_id,
-        sql_path=sql_path,
-    )
-    LOGGER.info("Manual export completed at: %s", exported_gcs_uri)
+    try:
+        # ---------------------------------------------------------------------
+        # Export the parameterized BigQuery query and capture the final GCS URI.
+        # ---------------------------------------------------------------------
 
-    # -------------------------------------------------------------------------
-    # Upload the exported GCS object to the configured Google Drive folder.
-    # -------------------------------------------------------------------------
-
-    uploaded_files = transfer_manual_gcs_to_google_drive(
-        gcs_uri=exported_gcs_uri,
-        country_code=country_code,
-        year_id=year_id,
-        month_id=month_id,
-    )
-    for uploaded_file in uploaded_files:
-        LOGGER.info(
-            "Manual flow uploaded %s to Google Drive: %s",
-            uploaded_file["gcs_uri"],
-            uploaded_file["drive_url"],
+        exported_gcs_uri = export_manual_bigquery_to_gcs(
+            country_code=country_code,
+            year_id=year_id,
+            month_id=month_id,
+            sql_path=sql_path,
         )
+        bq_to_gcs_status = SUCCESS_STATUS
+        LOGGER.info("Manual export completed at: %s", exported_gcs_uri)
 
-    return uploaded_files
+        # ---------------------------------------------------------------------
+        # Upload the exported GCS object to the configured Google Drive folder.
+        # ---------------------------------------------------------------------
+
+        uploaded_files = transfer_manual_gcs_to_google_drive(
+            gcs_uri=exported_gcs_uri,
+            country_code=country_code,
+            year_id=year_id,
+            month_id=month_id,
+        )
+        gcs_to_gdrive_status = SUCCESS_STATUS
+        for uploaded_file in uploaded_files:
+            LOGGER.info(
+                "Manual flow uploaded %s to Google Drive: %s",
+                uploaded_file["gcs_uri"],
+                uploaded_file["drive_url"],
+            )
+
+        return uploaded_files
+    except Exception as error:
+        error_reason = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        # ---------------------------------------------------------------------
+        # Notify Lark with the final step-level status for this manual run.
+        # ---------------------------------------------------------------------
+
+        send_lark_pipeline_notification(
+            run_type="Manual run",
+            records=[
+                PipelineRunRecord(
+                    country_code=country_code,
+                    year_id=year_id,
+                    month_id=month_id,
+                    bq_to_gcs_status=bq_to_gcs_status,
+                    gcs_to_gdrive_status=gcs_to_gdrive_status,
+                    error_reason=error_reason,
+                )
+            ],
+        )
 
 
 # =============================================================================

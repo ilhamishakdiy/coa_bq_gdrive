@@ -35,8 +35,13 @@ from schedule_run_script.schedule_bigquery_to_gcs import (
     export_schedule_bigquery_to_gcs,
 )
 from schedule_run_script.schedule_gcs_to_google_drive import (
+    _previous_month_period,
     transfer_schedule_gcs_to_google_drive,
 )
+from lark_notification import FAILED_STATUS
+from lark_notification import SUCCESS_STATUS
+from lark_notification import PipelineRunRecord
+from lark_notification import send_lark_pipeline_notification
 
 
 # =============================================================================
@@ -100,35 +105,67 @@ logging.basicConfig(
 def execute_schedule_export_flow(
     country_code: str,
     sql_path: Path = DEFAULT_SCHEDULE_SQL_PATH,
+    run_type: str = "Schedule run (per countrycode)",
 ) -> list[dict[str, str]]:
     """Run the scheduled export, then upload the exported GCS file to Drive."""
 
-    # -------------------------------------------------------------------------
-    # Export the scheduled BigQuery query and capture the final GCS URI.
-    # -------------------------------------------------------------------------
+    year_id, month_id = _previous_month_period()
+    bq_to_gcs_status = FAILED_STATUS
+    gcs_to_gdrive_status = FAILED_STATUS
+    error_reason = "-"
 
-    exported_gcs_uri = export_schedule_bigquery_to_gcs(
-        country_code=country_code,
-        sql_path=sql_path,
-    )
-    LOGGER.info("Scheduled export completed at: %s", exported_gcs_uri)
+    try:
+        # ---------------------------------------------------------------------
+        # Export the scheduled BigQuery query and capture the final GCS URI.
+        # ---------------------------------------------------------------------
 
-    # -------------------------------------------------------------------------
-    # Upload the exported GCS object to the configured Google Drive folder.
-    # -------------------------------------------------------------------------
-
-    uploaded_files = transfer_schedule_gcs_to_google_drive(
-        gcs_uri=exported_gcs_uri,
-        country_code=country_code,
-    )
-    for uploaded_file in uploaded_files:
-        LOGGER.info(
-            "Scheduled flow uploaded %s to Google Drive: %s",
-            uploaded_file["gcs_uri"],
-            uploaded_file["drive_url"],
+        exported_gcs_uri = export_schedule_bigquery_to_gcs(
+            country_code=country_code,
+            sql_path=sql_path,
         )
+        bq_to_gcs_status = SUCCESS_STATUS
+        LOGGER.info("Scheduled export completed at: %s", exported_gcs_uri)
 
-    return uploaded_files
+        # ---------------------------------------------------------------------
+        # Upload the exported GCS object to the configured Google Drive folder.
+        # ---------------------------------------------------------------------
+
+        uploaded_files = transfer_schedule_gcs_to_google_drive(
+            gcs_uri=exported_gcs_uri,
+            country_code=country_code,
+            year_id=year_id,
+            month_id=month_id,
+        )
+        gcs_to_gdrive_status = SUCCESS_STATUS
+        for uploaded_file in uploaded_files:
+            LOGGER.info(
+                "Scheduled flow uploaded %s to Google Drive: %s",
+                uploaded_file["gcs_uri"],
+                uploaded_file["drive_url"],
+            )
+
+        return uploaded_files
+    except Exception as error:
+        error_reason = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        # ---------------------------------------------------------------------
+        # Notify Lark with the final step-level status for this country run.
+        # ---------------------------------------------------------------------
+
+        send_lark_pipeline_notification(
+            run_type=run_type,
+            records=[
+                PipelineRunRecord(
+                    country_code=country_code,
+                    year_id=year_id,
+                    month_id=month_id,
+                    bq_to_gcs_status=bq_to_gcs_status,
+                    gcs_to_gdrive_status=gcs_to_gdrive_status,
+                    error_reason=error_reason,
+                )
+            ],
+        )
 
 
 # =============================================================================
@@ -184,6 +221,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             execute_schedule_export_flow(
                 country_code=country_code,
                 sql_path=sql_path,
+                run_type="Schedule run (all countrycode file)",
             )
         return
 
