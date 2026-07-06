@@ -1,8 +1,7 @@
 # =============================================================================
 # Scheduled export country codes
+# Line by line
 # =============================================================================
-#
-# Use one country code per line. Blank lines and comments are ignored.
 
 ZA
 VN
