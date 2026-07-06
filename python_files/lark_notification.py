@@ -38,7 +38,7 @@ load_dotenv(PROJECT_ROOT / ".env", override=False)
 # Constants
 # =============================================================================
 
-PIPELINE_NAME = "coa_bq_to_gdrive"
+PIPELINE_NAME = "STORE_SKU_SALES_MONTH"
 LARK_WEBHOOK_ENV_NAME = "LARK_WEBHOOK_URL"
 LARK_REQUEST_TIMEOUT_SECONDS = 15
 SUCCESS_STATUS = "success"
