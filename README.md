@@ -39,6 +39,7 @@ GCS_PROJECT_ID=your-gcs-project-id
 GCS_BUCKET_NAME=your-gcs-bucket
 DRIVE_FOLDER_ID=your-google-drive-folder-id
 COMPOSE_GCS_SHARDS=true
+STREAM_CHUNK_SIZE_MB=8
 ```
 
 <!-- ====================================================================== -->
@@ -157,6 +158,7 @@ python python_files\schedule_run_script\schedule_execute_export_flow.py --countr
 
 BigQuery exports CSV shards first. When `COMPOSE_GCS_SHARDS=true`, the scripts
 compose those shards into one final CSV before upload.
+Google Drive uploads stream from GCS with `STREAM_CHUNK_SIZE_MB=8` by default.
 
 For Airflow 3.x, import the `execute_*_export_flow` functions and keep secrets
 in environment variables, Airflow Variables, or a secret backend.

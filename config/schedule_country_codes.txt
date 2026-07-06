@@ -5,6 +5,7 @@
 # Use one country code per line. Blank lines and comments are ignored.
 # Comma-separated values are also supported.
 
-BD
-BN
+TH
+PH
 ID
+BD
