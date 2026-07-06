@@ -86,6 +86,12 @@ python python_files/schedule_run_script/schedule_execute_export_flow.py \
   --country-code-file config/schedule_country_codes.txt
 ```
 
+Run both for every country code in a file:
+
+```powershell
+python python_files\schedule_run_script\schedule_execute_export_flow.py --country-code-file config\schedule_country_codes.txt
+```
+
 Example scheduled full flow with log append:
 
 ```bash
