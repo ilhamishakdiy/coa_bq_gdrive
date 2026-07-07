@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from types import TracebackType
 from typing import Sequence
 
 
@@ -102,17 +103,18 @@ logging.basicConfig(
 # Public scheduled flow function
 # =============================================================================
 
-def execute_schedule_export_flow(
+def _run_schedule_export_steps(
     country_code: str,
     sql_path: Path = DEFAULT_SCHEDULE_SQL_PATH,
-    run_type: str = "Schedule run (per countrycode)",
-) -> list[dict[str, str]]:
-    """Run the scheduled export, then upload the exported GCS file to Drive."""
+) -> tuple[list[dict[str, str]], PipelineRunRecord, BaseException | None]:
+    """Run one scheduled country export and return its notification record."""
 
     year_id, month_id = _previous_month_period()
     bq_to_gcs_status = FAILED_STATUS
     gcs_to_gdrive_status = FAILED_STATUS
     error_reason = "-"
+    uploaded_files: list[dict[str, str]] = []
+    caught_error: BaseException | None = None
 
     try:
         # ---------------------------------------------------------------------
@@ -144,28 +146,116 @@ def execute_schedule_export_flow(
                 uploaded_file["drive_url"],
             )
 
-        return uploaded_files
     except Exception as error:
         error_reason = f"{type(error).__name__}: {error}"
-        raise
-    finally:
-        # ---------------------------------------------------------------------
-        # Notify Lark with the final step-level status for this country run.
-        # ---------------------------------------------------------------------
+        caught_error = error
 
+    # -------------------------------------------------------------------------
+    # Build one row for either per-country notification or batch summary.
+    # -------------------------------------------------------------------------
+
+    run_record = PipelineRunRecord(
+        country_code=country_code,
+        year_id=year_id,
+        month_id=month_id,
+        bq_to_gcs_status=bq_to_gcs_status,
+        gcs_to_gdrive_status=gcs_to_gdrive_status,
+        error_reason=error_reason,
+    )
+    return uploaded_files, run_record, caught_error
+
+
+def _raise_with_original_traceback(error: BaseException) -> None:
+    """Raise an error while preserving its original traceback when available."""
+
+    traceback = error.__traceback__
+    if isinstance(traceback, TracebackType):
+        raise error.with_traceback(traceback)
+
+    raise error
+
+
+def execute_schedule_export_flow(
+    country_code: str,
+    sql_path: Path = DEFAULT_SCHEDULE_SQL_PATH,
+    run_type: str = "Schedule run (per countrycode)",
+    send_notification: bool = True,
+) -> list[dict[str, str]]:
+    """Run one scheduled export, then optionally send its Lark notification."""
+
+    uploaded_files, run_record, caught_error = _run_schedule_export_steps(
+        country_code=country_code,
+        sql_path=sql_path,
+    )
+
+    # -------------------------------------------------------------------------
+    # Notify Lark with the final step-level status for this country run.
+    # -------------------------------------------------------------------------
+
+    if send_notification:
         send_lark_pipeline_notification(
             run_type=run_type,
-            records=[
-                PipelineRunRecord(
-                    country_code=country_code,
-                    year_id=year_id,
-                    month_id=month_id,
-                    bq_to_gcs_status=bq_to_gcs_status,
-                    gcs_to_gdrive_status=gcs_to_gdrive_status,
-                    error_reason=error_reason,
-                )
-            ],
+            records=[run_record],
         )
+
+    if caught_error:
+        _raise_with_original_traceback(caught_error)
+
+    return uploaded_files
+
+
+def execute_schedule_export_flow_for_country_file(
+    country_codes: list[str],
+    sql_path: Path = DEFAULT_SCHEDULE_SQL_PATH,
+) -> list[dict[str, str]]:
+    """Run scheduled exports for many countries and send one summary card."""
+
+    all_uploaded_files: list[dict[str, str]] = []
+    run_records: list[PipelineRunRecord] = []
+    failed_country_codes: list[str] = []
+
+    for country_code in country_codes:
+        # ---------------------------------------------------------------------
+        # Execute each country and collect one summary row for the final card.
+        # ---------------------------------------------------------------------
+
+        LOGGER.info("Starting scheduled export flow for COUNTRYCODE=%s", country_code)
+        uploaded_files, run_record, caught_error = _run_schedule_export_steps(
+            country_code=country_code,
+            sql_path=sql_path,
+        )
+        all_uploaded_files.extend(uploaded_files)
+        run_records.append(run_record)
+
+        if caught_error:
+            failed_country_codes.append(country_code)
+            LOGGER.error(
+                "Scheduled export flow failed for COUNTRYCODE=%s.",
+                country_code,
+                exc_info=(
+                    type(caught_error),
+                    caught_error,
+                    caught_error.__traceback__,
+                ),
+            )
+
+    # -------------------------------------------------------------------------
+    # Send one Lark summary card for the whole country-code file run.
+    # -------------------------------------------------------------------------
+
+    send_lark_pipeline_notification(
+        run_type="Schedule run (all countrycode file)",
+        records=run_records,
+    )
+
+    if failed_country_codes:
+        failed_country_text = ", ".join(failed_country_codes)
+        raise RuntimeError(
+            "Scheduled export flow failed for country code(s): "
+            f"{failed_country_text}"
+        )
+
+    return all_uploaded_files
 
 
 # =============================================================================
@@ -216,13 +306,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             "Starting scheduled export flow for %d country code(s).",
             len(country_codes),
         )
-        for country_code in country_codes:
-            LOGGER.info("Starting scheduled export flow for COUNTRYCODE=%s", country_code)
-            execute_schedule_export_flow(
-                country_code=country_code,
-                sql_path=sql_path,
-                run_type="Schedule run (all countrycode file)",
-            )
+        execute_schedule_export_flow_for_country_file(
+            country_codes=country_codes,
+            sql_path=sql_path,
+        )
         return
 
     execute_schedule_export_flow(

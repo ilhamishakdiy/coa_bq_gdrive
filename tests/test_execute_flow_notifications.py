@@ -169,6 +169,51 @@ class ScheduleFlowNotificationTests(unittest.TestCase):
         self.assertEqual(record.gcs_to_gdrive_status, FAILED_STATUS)
         self.assertIn("drive failed", record.error_reason)
 
+    @mock.patch.object(schedule_execute_export_flow, "send_lark_pipeline_notification")
+    @mock.patch.object(schedule_execute_export_flow, "transfer_schedule_gcs_to_google_drive")
+    @mock.patch.object(schedule_execute_export_flow, "export_schedule_bigquery_to_gcs")
+    @mock.patch.object(schedule_execute_export_flow, "_previous_month_period")
+    def test_schedule_country_file_sends_one_summary_notification(
+        self,
+        mock_previous_month_period: mock.Mock,
+        mock_export: mock.Mock,
+        mock_transfer: mock.Mock,
+        mock_notify: mock.Mock,
+    ) -> None:
+        """Send one summary notification for a scheduled country-code file."""
+
+        mock_previous_month_period.return_value = (2026, 6)
+        mock_export.side_effect = [
+            "gs://bucket/IN.csv",
+            "gs://bucket/ID.csv",
+        ]
+        mock_transfer.return_value = [
+            {
+                "gcs_uri": "gs://bucket/file.csv",
+                "drive_url": "https://drive.example/file",
+            }
+        ]
+
+        schedule_execute_export_flow.execute_schedule_export_flow_for_country_file(
+            country_codes=["IN", "ID"],
+        )
+
+        mock_notify.assert_called_once()
+        notify_kwargs = mock_notify.call_args.kwargs
+        records = notify_kwargs["records"]
+
+        self.assertEqual(
+            notify_kwargs["run_type"],
+            "Schedule run (all countrycode file)",
+        )
+        self.assertEqual([record.country_code for record in records], ["IN", "ID"])
+        self.assertTrue(
+            all(record.bq_to_gcs_status == SUCCESS_STATUS for record in records)
+        )
+        self.assertTrue(
+            all(record.gcs_to_gdrive_status == SUCCESS_STATUS for record in records)
+        )
+
 
 # =============================================================================
 # Test entry point
