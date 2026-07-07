@@ -39,7 +39,7 @@ if str(PYTHON_FILES_FOLDER) not in sys.path:
 
 from dotenv import load_dotenv
 from google import auth
-from google.api_core.exceptions import GoogleAPIError
+from google.api_core.exceptions import GoogleAPIError, NotFound
 from google.cloud import bigquery, storage
 from google.oauth2 import service_account
 
@@ -342,6 +342,41 @@ def _split_gcs_uri(gcs_uri: str) -> tuple[str, str]:
     return uri_match.group(1), uri_match.group(2)
 
 
+# =============================================================================
+# GCS deletion helpers
+# =============================================================================
+
+def _delete_gcs_blob_if_exists(
+    blob: storage.Blob,
+    delete_context: str,
+) -> bool:
+    """Delete a GCS object and handle stale generation references safely."""
+
+    try:
+        blob.delete()
+        return True
+    except NotFound:
+        current_blob = blob.bucket.blob(blob.name)
+        if current_blob.exists():
+            current_blob.delete()
+            LOGGER.warning(
+                "Deleted current GCS object after stale generation vanished "
+                "during %s cleanup: gs://%s/%s",
+                delete_context,
+                current_blob.bucket.name,
+                current_blob.name,
+            )
+            return True
+
+        LOGGER.warning(
+            "Skipped missing GCS object during %s cleanup: gs://%s/%s",
+            delete_context,
+            blob.bucket.name,
+            blob.name,
+        )
+        return False
+
+
 def _clear_gcs_export_folder(
     storage_client: storage.Client,
     gcs_export_uri: str,
@@ -355,15 +390,20 @@ def _clear_gcs_export_folder(
 
     export_prefix = f"{export_folder.rstrip('/')}/"
     deleted_count = 0
+    missing_count = 0
     for blob in storage_client.list_blobs(bucket_name, prefix=export_prefix):
-        blob.delete()
-        deleted_count += 1
+        if _delete_gcs_blob_if_exists(blob, "pre-export shard-folder"):
+            deleted_count += 1
+        else:
+            missing_count += 1
 
     LOGGER.info(
-        "Cleared %d existing GCS shard object(s) under gs://%s/%s",
+        "Cleared %d existing GCS shard object(s) under gs://%s/%s "
+        "(%d already missing)",
         deleted_count,
         bucket_name,
         export_prefix,
+        missing_count,
     )
 
 
@@ -489,7 +529,7 @@ def _compose_objects(
 
     if delete_source_objects:
         for source_blob in source_blobs:
-            source_blob.delete()
+            _delete_gcs_blob_if_exists(source_blob, "post-compose source")
 
     LOGGER.info(
         "Composed %d objects into gs://%s/%s",

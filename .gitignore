@@ -60,3 +60,4 @@ Thumbs.db
 
 clear_gcs_folder.py
 merge_gcs_shards.py
+year_split.txt
