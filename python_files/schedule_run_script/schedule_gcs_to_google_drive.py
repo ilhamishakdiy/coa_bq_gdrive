@@ -45,6 +45,13 @@ from googleapiclient.http import MediaIoBaseUpload
 
 
 # =============================================================================
+# Project imports
+# =============================================================================
+
+from pipeline_config import build_drive_file_name
+
+
+# =============================================================================
 # Logging configuration
 # =============================================================================
 
@@ -428,14 +435,15 @@ def _build_drive_file_name(
     year_id: int,
     month_id: int,
 ) -> str:
-    """Build the final Google Drive CSV filename."""
+    """Build the configured final Google Drive filename."""
 
     safe_country_code = _validate_country_code(country_code)
     safe_year_id = _validate_year_id(year_id)
     safe_month_id = _validate_month_id(month_id)
-    return (
-        "STORE_SKU_SALES_MONTH_"
-        f"{safe_country_code}_{safe_month_id:02d}{safe_year_id}.csv"
+    return build_drive_file_name(
+        country_code=safe_country_code,
+        year_id=safe_year_id,
+        month_id=safe_month_id,
     )
 
 

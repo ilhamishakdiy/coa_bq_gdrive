@@ -45,6 +45,13 @@ from google.cloud import bigquery, storage
 
 
 # =============================================================================
+# Project imports
+# =============================================================================
+
+from pipeline_config import build_gcs_file_name
+
+
+# =============================================================================
 # Logging configuration
 # =============================================================================
 
@@ -265,16 +272,24 @@ def _build_bucket_file_name(
     month_id: int,
     run_timestamp: str,
 ) -> str:
-    """Build the timestamped CSV filename used in the GCS bucket."""
+    """Build the configured timestamped filename used in the GCS bucket."""
 
     safe_country_code = _validate_country_code(country_code)
     safe_year_id = _validate_year_id(year_id)
     safe_month_id = _validate_month_id(month_id)
-    return (
-        "STORE_SKU_SALES_MONTH_"
-        f"{safe_country_code}_{safe_month_id:02d}{safe_year_id}_"
-        f"{run_timestamp}.csv"
+    return build_gcs_file_name(
+        country_code=safe_country_code,
+        year_id=safe_year_id,
+        month_id=safe_month_id,
+        run_timestamp=run_timestamp,
     )
+
+
+def _build_wildcard_file_name(bucket_file_name: str) -> str:
+    """Build the BigQuery shard wildcard filename from the configured name."""
+
+    bucket_file_path = Path(bucket_file_name)
+    return f"{bucket_file_path.stem}_*{bucket_file_path.suffix}"
 
 
 # =============================================================================
@@ -289,7 +304,7 @@ def _build_gcs_export_uri(
     """Return the configured URI or generate a Drive-compatible wildcard URI."""
 
     safe_country_code = _validate_country_code(country_code)
-    bucket_file_stem = Path(bucket_file_name).stem
+    wildcard_file_name = _build_wildcard_file_name(bucket_file_name)
     configured_uri = _optional_environment_value("GCS_EXPORT_URI")
     if configured_uri:
         _validate_gcs_export_uri(configured_uri, bucket_name)
@@ -298,7 +313,7 @@ def _build_gcs_export_uri(
         configured_prefix = "" if configured_parent == "." else configured_parent
         configured_object_path = "/".join(
             part
-            for part in (configured_prefix, f"{bucket_file_stem}_*.csv")
+            for part in (configured_prefix, wildcard_file_name)
             if part
         )
         return f"gs://{bucket_name}/{configured_object_path}"
@@ -308,7 +323,7 @@ def _build_gcs_export_uri(
         "exports/bigquery",
     ).strip("/")
 
-    object_name = f"{bucket_file_stem}_*.csv"
+    object_name = wildcard_file_name
     object_path = "/".join(
         part for part in (object_prefix, safe_country_code, object_name) if part
     )
@@ -422,8 +437,8 @@ def _build_composed_object_name(wildcard_object_name: str) -> str:
     # Remove the separator before the wildcard for a clean final filename.
     # -------------------------------------------------------------------------
 
-    if source_file_name.endswith("_*.csv"):
-        composed_file_name = f"{source_file_name[:-6]}.csv"
+    if "_*" in source_file_name:
+        composed_file_name = source_file_name.replace("_*", "", 1)
     else:
         composed_file_name = source_file_name.replace("*", "composed", 1)
 

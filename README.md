@@ -38,6 +38,9 @@ BQ_PROJECT_ID=your-bigquery-project-id
 GCS_PROJECT_ID=your-gcs-project-id
 GCS_BUCKET_NAME=your-gcs-bucket
 DRIVE_FOLDER_ID=your-google-drive-folder-id
+PIPELINE_NAME=STORE_SKU_SALES_MONTH
+GCS_FILE_NAME_TEMPLATE={PIPELINE_NAME}_{COUNTRYCODE}_{MM}{YYYY}_{TIMESTAMP}.csv
+DRIVE_FILE_NAME_TEMPLATE={PIPELINE_NAME}_{COUNTRYCODE}_{MM}{YYYY}.csv
 COMPOSE_GCS_SHARDS=true
 STREAM_CHUNK_SIZE_MB=8
 LARK_WEBHOOK_URL=your-lark-incoming-webhook-url
@@ -51,16 +54,20 @@ LARK_WEBHOOK_URL=your-lark-incoming-webhook-url
 
 Each country uses its own folder in GCS and Google Drive.
 
+`PIPELINE_NAME` controls the Lark card title and can be reused inside the
+filename templates. Supported filename placeholders are `{PIPELINE_NAME}`,
+`{COUNTRYCODE}`, `{MM}`, `{YYYY}`, `{MONTHID}`, `{YEARID}`, and `{TIMESTAMP}`.
+
 GCS raw export shards are written under:
 
 ```text
-gs://<GCS_BUCKET_NAME>/<GCS_OBJECT_PREFIX>/<COUNTRYCODE>/STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>_<TIMESTAMP>_*.csv
+gs://<GCS_BUCKET_NAME>/<GCS_OBJECT_PREFIX>/<COUNTRYCODE>/<GCS_FILE_NAME_TEMPLATE stem>_*.csv
 ```
 
 GCS composed CSV files are written under:
 
 ```text
-gs://<GCS_BUCKET_NAME>/<GCS_MERGED_OBJECT_PREFIX>/<COUNTRYCODE>/STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>_<TIMESTAMP>.csv
+gs://<GCS_BUCKET_NAME>/<GCS_MERGED_OBJECT_PREFIX>/<COUNTRYCODE>/<GCS_FILE_NAME_TEMPLATE>
 ```
 
 Google Drive uploads go into a child folder named by country code under
@@ -70,13 +77,13 @@ Google Drive uploads go into a child folder named by country code under
 <DRIVE_FOLDER_ID>/<COUNTRYCODE>/
 ```
 
-The GCS composed CSV filename format is:
+The default GCS composed CSV filename format is:
 
 ```text
 STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>_<TIMESTAMP>.csv
 ```
 
-The Google Drive CSV filename format is:
+The default Google Drive CSV filename format is:
 
 ```text
 STORE_SKU_SALES_MONTH_<COUNTRYCODE>_<MM><YYYY>.csv

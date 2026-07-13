@@ -35,10 +35,17 @@ load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 
 # =============================================================================
+# Project imports
+# =============================================================================
+
+from pipeline_config import pipeline_name
+
+
+# =============================================================================
 # Constants
 # =============================================================================
 
-PIPELINE_NAME = "STORE_SKU_SALES_MONTH"
+PIPELINE_NAME = pipeline_name()
 LARK_WEBHOOK_ENV_NAME = "LARK_WEBHOOK_URL"
 LARK_REQUEST_TIMEOUT_SECONDS = 15
 SUCCESS_STATUS = "success"
@@ -205,6 +212,7 @@ def build_lark_pipeline_card(
     is_success = _pipeline_succeeded(records)
     status_text = _status_text(is_success)
     card_date, card_time = _formatted_now()
+    configured_pipeline_name = pipeline_name()
 
     summary_markdown = (
         f"**Date:** {card_date}\n"
@@ -225,7 +233,9 @@ def build_lark_pipeline_card(
                 "template": "green" if is_success else "red",
                 "title": {
                     "tag": "plain_text",
-                    "content": f"{PIPELINE_NAME} Pipeline {status_text}",
+                    "content": (
+                        f"{configured_pipeline_name} Pipeline {status_text}"
+                    ),
                 },
             },
             "body": {
