@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -14,8 +13,7 @@ from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 from typing import Any
-from urllib import error
-from urllib import request
+from urllib.parse import quote
 
 
 # =============================================================================
@@ -38,6 +36,11 @@ load_dotenv(PROJECT_ROOT / ".env", override=False)
 # Project imports
 # =============================================================================
 
+from lark_delivery import DEFAULT_LARK_WEBHOOK_ENV_NAME
+from lark_delivery import INTERNAL_LARK_WEBHOOK_ENV_NAME
+from lark_delivery import USER_LARK_WEBHOOK_ENV_NAME
+from lark_delivery import send_lark_payload_to_any
+from pipeline_config import pipeline_display_name
 from pipeline_config import pipeline_name
 
 
@@ -46,8 +49,14 @@ from pipeline_config import pipeline_name
 # =============================================================================
 
 PIPELINE_NAME = pipeline_name()
-LARK_WEBHOOK_ENV_NAME = "LARK_WEBHOOK_URL"
-LARK_REQUEST_TIMEOUT_SECONDS = 15
+LARK_WEBHOOK_ENV_NAME = DEFAULT_LARK_WEBHOOK_ENV_NAME
+PIPELINE_LARK_WEBHOOK_ENV_NAMES = (
+    INTERNAL_LARK_WEBHOOK_ENV_NAME,
+    USER_LARK_WEBHOOK_ENV_NAME,
+    DEFAULT_LARK_WEBHOOK_ENV_NAME,
+)
+DRIVE_FOLDER_ENV_NAME = "DRIVE_FOLDER_ID"
+LARK_TABLE_PAGE_SIZE_ENV_NAME = "LARK_TABLE_PAGE_SIZE"
 SUCCESS_STATUS = "success"
 FAILED_STATUS = "failed"
 EMPTY_ERROR_REASON = "-"
@@ -168,12 +177,32 @@ def _build_table_rows(records: list[PipelineRunRecord]) -> list[dict[str, str]]:
     ]
 
 
+def _lark_table_page_size(record_count: int) -> int:
+    """Return the configured Lark table page size for summary rows."""
+
+    configured_page_size = os.getenv(LARK_TABLE_PAGE_SIZE_ENV_NAME, "").strip()
+    if not configured_page_size:
+        return max(1, record_count)
+
+    try:
+        page_size = int(configured_page_size)
+    except ValueError as error:
+        raise ValueError(
+            f"{LARK_TABLE_PAGE_SIZE_ENV_NAME} must be a whole number."
+        ) from error
+
+    if page_size <= 0:
+        raise ValueError(f"{LARK_TABLE_PAGE_SIZE_ENV_NAME} must be positive.")
+
+    return page_size
+
+
 def _build_lark_table(records: list[PipelineRunRecord]) -> dict[str, Any]:
     """Build a native Lark table element for load details."""
 
     return {
         "tag": "table",
-        "page_size": max(1, min(len(records), 10)),
+        "page_size": _lark_table_page_size(len(records)),
         "row_height": "low",
         "freeze_first_column": True,
         "header_style": {
@@ -199,6 +228,19 @@ def _formatted_now() -> tuple[str, str]:
     )
 
 
+def _drive_folder_url() -> str | None:
+    """Return the configured Google Drive folder URL for the card summary."""
+
+    drive_folder_id = os.getenv(DRIVE_FOLDER_ENV_NAME, "").strip()
+    if not drive_folder_id:
+        return None
+
+    return (
+        "https://drive.google.com/drive/folders/"
+        f"{quote(drive_folder_id, safe='')}"
+    )
+
+
 # =============================================================================
 # Lark card builder
 # =============================================================================
@@ -212,14 +254,23 @@ def build_lark_pipeline_card(
     is_success = _pipeline_succeeded(records)
     status_text = _status_text(is_success)
     card_date, card_time = _formatted_now()
-    configured_pipeline_name = pipeline_name()
+    configured_pipeline_display_name = pipeline_display_name()
+    drive_folder_url = _drive_folder_url()
 
-    summary_markdown = (
-        f"**Date:** {card_date}\n"
-        f"**Time:** {card_time}\n"
-        f"**Run type:** {run_type}\n"
-        f"**Pipeline:** {SUCCESS_STATUS if is_success else FAILED_STATUS}"
+    summary_lines = [
+        f"**Date:** {card_date}",
+        f"**Time:** {card_time}",
+    ]
+    if drive_folder_url:
+        summary_lines.append(f"**Google Drive folder:** {drive_folder_url}")
+
+    summary_lines.extend(
+        [
+            f"**Run type:** {run_type}",
+            f"**Pipeline:** {SUCCESS_STATUS if is_success else FAILED_STATUS}",
+        ]
     )
+    summary_markdown = "\n".join(summary_lines)
 
     return {
         "msg_type": "interactive",
@@ -234,7 +285,8 @@ def build_lark_pipeline_card(
                 "title": {
                     "tag": "plain_text",
                     "content": (
-                        f"{configured_pipeline_name} Pipeline {status_text}"
+                        f"{configured_pipeline_display_name} Pipeline "
+                        f"{status_text}"
                     ),
                 },
             },
@@ -258,61 +310,18 @@ def build_lark_pipeline_card(
     }
 
 
-# =============================================================================
-# Webhook delivery
-# =============================================================================
-
-def _post_lark_webhook(webhook_url: str, payload: dict[str, Any]) -> None:
-    """Post one JSON payload to the configured Lark webhook URL."""
-
-    request_body = json.dumps(payload).encode("utf-8")
-    webhook_request = request.Request(
-        webhook_url,
-        data=request_body,
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        method="POST",
-    )
-
-    with request.urlopen(
-        webhook_request,
-        timeout=LARK_REQUEST_TIMEOUT_SECONDS,
-    ) as response:
-        response_body = response.read().decode("utf-8")
-
-    if not response_body:
-        return
-
-    try:
-        response_json = json.loads(response_body)
-    except json.JSONDecodeError:
-        LOGGER.debug("Lark webhook returned a non-JSON response: %s", response_body)
-        return
-
-    if response_json.get("code", 0) not in {0, "0"}:
-        raise RuntimeError(f"Lark webhook returned an error response: {response_body}")
-
-
 def send_lark_pipeline_notification(
     run_type: str,
     records: list[PipelineRunRecord],
 ) -> None:
     """Send a Lark pipeline notification when a webhook URL is configured."""
 
-    webhook_url = os.getenv(LARK_WEBHOOK_ENV_NAME, "").strip()
-    if not webhook_url:
-        LOGGER.info("%s is not set. Skipping Lark notification.", LARK_WEBHOOK_ENV_NAME)
-        return
-
     payload = build_lark_pipeline_card(
         run_type=run_type,
         records=records,
     )
-
-    try:
-        _post_lark_webhook(
-            webhook_url=webhook_url,
-            payload=payload,
-        )
-        LOGGER.info("Lark pipeline notification sent for %s.", run_type)
-    except (OSError, RuntimeError, error.URLError, error.HTTPError):
-        LOGGER.exception("Failed to send Lark pipeline notification.")
+    send_lark_payload_to_any(
+        payload=payload,
+        webhook_env_names=PIPELINE_LARK_WEBHOOK_ENV_NAMES,
+        notification_name=f"Lark pipeline notification for {run_type}",
+    )

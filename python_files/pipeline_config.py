@@ -16,6 +16,8 @@ from typing import Any
 # =============================================================================
 
 DEFAULT_PIPELINE_NAME = "STORE_SKU_SALES_MONTH"
+DEFAULT_DEPARTMENT = "COA"
+DEFAULT_PIPELINE_DISPLAY_NAME_TEMPLATE = "{DEPARTMENT}: {PIPELINE_NAME}"
 DEFAULT_GCS_FILE_NAME_TEMPLATE = (
     "{PIPELINE_NAME}_{COUNTRYCODE}_{MM}{YYYY}_{TIMESTAMP}.csv"
 )
@@ -24,8 +26,11 @@ DEFAULT_DRIVE_FILE_NAME_TEMPLATE = "{PIPELINE_NAME}_{COUNTRYCODE}_{MM}{YYYY}.csv
 GCS_FILE_NAME_TEMPLATE_ENV_NAME = "GCS_FILE_NAME_TEMPLATE"
 DRIVE_FILE_NAME_TEMPLATE_ENV_NAME = "DRIVE_FILE_NAME_TEMPLATE"
 PIPELINE_NAME_ENV_NAME = "PIPELINE_NAME"
+DEPARTMENT_ENV_NAME = "DEPARTMENT"
+PIPELINE_DISPLAY_NAME_TEMPLATE_ENV_NAME = "PIPELINE_DISPLAY_NAME_TEMPLATE"
 
 ALLOWED_FILE_NAME_TEMPLATE_FIELDS = {
+    "DEPARTMENT",
     "PIPELINE_NAME",
     "COUNTRYCODE",
     "YYYY",
@@ -51,6 +56,25 @@ def pipeline_name() -> str:
     """Return the configured pipeline name used in files and notifications."""
 
     return _optional_environment_value(PIPELINE_NAME_ENV_NAME) or DEFAULT_PIPELINE_NAME
+
+
+def department() -> str:
+    """Return the configured department name for display labels."""
+
+    return _optional_environment_value(DEPARTMENT_ENV_NAME) or DEFAULT_DEPARTMENT
+
+
+def pipeline_display_name() -> str:
+    """Return the configured pipeline display name for notifications."""
+
+    template = (
+        _optional_environment_value(PIPELINE_DISPLAY_NAME_TEMPLATE_ENV_NAME)
+        or DEFAULT_PIPELINE_DISPLAY_NAME_TEMPLATE
+    )
+    return template.format(
+        DEPARTMENT=department(),
+        PIPELINE_NAME=pipeline_name(),
+    ).strip()
 
 
 # =============================================================================
@@ -115,6 +139,7 @@ def _file_name_template_values(
     """Build reusable values for GCS and Drive filename templates."""
 
     return {
+        "DEPARTMENT": department(),
         "PIPELINE_NAME": pipeline_name(),
         "COUNTRYCODE": country_code,
         "YYYY": f"{year_id:04d}",

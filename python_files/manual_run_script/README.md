@@ -50,4 +50,4 @@ When `COMPOSE_GCS_SHARDS=true`, CSV shards are combined into one final file.
 The GCS shard folder is cleared before each successful BigQuery export starts.
 The final GCS filename uses `GCS_FILE_NAME_TEMPLATE`.
 The final Google Drive filename uses `DRIVE_FILE_NAME_TEMPLATE`.
-`PIPELINE_NAME` can be reused inside both templates.
+`DEPARTMENT` and `PIPELINE_NAME` can be reused inside both templates.

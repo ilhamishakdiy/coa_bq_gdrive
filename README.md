@@ -38,13 +38,43 @@ BQ_PROJECT_ID=your-bigquery-project-id
 GCS_PROJECT_ID=your-gcs-project-id
 GCS_BUCKET_NAME=your-gcs-bucket
 DRIVE_FOLDER_ID=your-google-drive-folder-id
+DEPARTMENT=COA
 PIPELINE_NAME=STORE_SKU_SALES_MONTH
+PIPELINE_DISPLAY_NAME_TEMPLATE={DEPARTMENT}: {PIPELINE_NAME}
 GCS_FILE_NAME_TEMPLATE={PIPELINE_NAME}_{COUNTRYCODE}_{MM}{YYYY}_{TIMESTAMP}.csv
 DRIVE_FILE_NAME_TEMPLATE={PIPELINE_NAME}_{COUNTRYCODE}_{MM}{YYYY}.csv
 COMPOSE_GCS_SHARDS=true
 STREAM_CHUNK_SIZE_MB=8
-LARK_WEBHOOK_URL=your-lark-incoming-webhook-url
+INTERNAL_LARK_WEBHOOK_URL=your-internal-lark-incoming-webhook-url
+USER_LARK_WEBHOOK_URL=your-user-lark-incoming-webhook-url
+LARK_TABLE_PAGE_SIZE=
 ```
+
+<!-- ====================================================================== -->
+<!-- Lark notification modules                                              -->
+<!-- ====================================================================== -->
+
+## Lark Notification Modules
+
+Lark delivery is split from message formatting so other projects can reuse the
+same webhook sender with different message builders.
+
+Use `python_files/lark_delivery.py` to send any prepared Lark payload:
+
+```python
+from lark_delivery import send_lark_payload
+
+send_lark_payload(payload=my_lark_payload, notification_name="My notification")
+```
+
+Use `python_files/lark_notification.py` only for this pipeline's summary card:
+
+```python
+from lark_notification import send_lark_pipeline_notification
+```
+
+Set `LARK_TABLE_PAGE_SIZE` when the Lark summary table should paginate at a
+fixed row count. Leave it blank to show all rows on one table page.
 
 <!-- ====================================================================== -->
 <!-- Output folder and filename                                             -->
@@ -54,9 +84,12 @@ LARK_WEBHOOK_URL=your-lark-incoming-webhook-url
 
 Each country uses its own folder in GCS and Google Drive.
 
-`PIPELINE_NAME` controls the Lark card title and can be reused inside the
-filename templates. Supported filename placeholders are `{PIPELINE_NAME}`,
-`{COUNTRYCODE}`, `{MM}`, `{YYYY}`, `{MONTHID}`, `{YEARID}`, and `{TIMESTAMP}`.
+`DEPARTMENT` and `PIPELINE_NAME` control the Lark card title through
+`PIPELINE_DISPLAY_NAME_TEMPLATE`, which defaults to
+`{DEPARTMENT}: {PIPELINE_NAME}`. They can also be reused inside the filename
+templates. Supported filename placeholders are `{DEPARTMENT}`,
+`{PIPELINE_NAME}`, `{COUNTRYCODE}`, `{MM}`, `{YYYY}`, `{MONTHID}`, `{YEARID}`,
+and `{TIMESTAMP}`.
 
 GCS raw export shards are written under:
 
@@ -181,8 +214,10 @@ python python_files\schedule_run_script\schedule_execute_export_flow.py --countr
 BigQuery exports CSV shards first. When `COMPOSE_GCS_SHARDS=true`, the scripts
 compose those shards into one final CSV before upload.
 Google Drive uploads stream from GCS with `STREAM_CHUNK_SIZE_MB=8` by default.
-When `LARK_WEBHOOK_URL` is set, each manual or scheduled country run sends a
-`coa_bq_to_gdrive` summary card with BigQuery-to-GCS and GCS-to-Drive status.
+When `INTERNAL_LARK_WEBHOOK_URL` or `USER_LARK_WEBHOOK_URL` is set, each manual
+or scheduled country run sends a summary card with BigQuery-to-GCS and
+GCS-to-Drive status to every configured webhook. `LARK_WEBHOOK_URL` remains as
+a backward-compatible fallback.
 
 For Airflow 3.x, import the `execute_*_export_flow` functions and keep secrets
 in environment variables, Airflow Variables, or a secret backend.

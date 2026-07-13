@@ -30,6 +30,8 @@ if str(PYTHON_FILES_FOLDER) not in sys.path:
 
 from pipeline_config import build_drive_file_name
 from pipeline_config import build_gcs_file_name
+from pipeline_config import department
+from pipeline_config import pipeline_display_name
 from pipeline_config import pipeline_name
 
 
@@ -44,7 +46,12 @@ class PipelineConfigTests(unittest.TestCase):
     def test_default_file_names_match_existing_convention(self) -> None:
         """Use the legacy filename shape when templates are not configured."""
 
+        self.assertEqual(department(), "COA")
         self.assertEqual(pipeline_name(), "STORE_SKU_SALES_MONTH")
+        self.assertEqual(
+            pipeline_display_name(),
+            "COA: STORE_SKU_SALES_MONTH",
+        )
         self.assertEqual(
             build_gcs_file_name(
                 country_code="BD",
@@ -66,18 +73,27 @@ class PipelineConfigTests(unittest.TestCase):
     @mock.patch.dict(
         os.environ,
         {
+            "DEPARTMENT": "FIN",
             "PIPELINE_NAME": "CUSTOM_PIPELINE",
-            "GCS_FILE_NAME_TEMPLATE": (
-                "{PIPELINE_NAME}-{COUNTRYCODE}-{YYYY}-{MM}-{TIMESTAMP}.csv"
+            "PIPELINE_DISPLAY_NAME_TEMPLATE": (
+                "{DEPARTMENT}: {PIPELINE_NAME}"
             ),
-            "DRIVE_FILE_NAME_TEMPLATE": "{PIPELINE_NAME}-{COUNTRYCODE}-{YYYY}-{MM}.csv",
+            "GCS_FILE_NAME_TEMPLATE": (
+                "{DEPARTMENT}-{PIPELINE_NAME}-{COUNTRYCODE}-{YYYY}-{MM}-"
+                "{TIMESTAMP}.csv"
+            ),
+            "DRIVE_FILE_NAME_TEMPLATE": (
+                "{DEPARTMENT}-{PIPELINE_NAME}-{COUNTRYCODE}-{YYYY}-{MM}.csv"
+            ),
         },
         clear=True,
     )
     def test_custom_file_name_templates_use_environment_values(self) -> None:
         """Use configured filename templates for reusable pipelines."""
 
+        self.assertEqual(department(), "FIN")
         self.assertEqual(pipeline_name(), "CUSTOM_PIPELINE")
+        self.assertEqual(pipeline_display_name(), "FIN: CUSTOM_PIPELINE")
         self.assertEqual(
             build_gcs_file_name(
                 country_code="MY",
@@ -85,7 +101,7 @@ class PipelineConfigTests(unittest.TestCase):
                 month_id=7,
                 run_timestamp="20260801T010203Z",
             ),
-            "CUSTOM_PIPELINE-MY-2026-07-20260801T010203Z.csv",
+            "FIN-CUSTOM_PIPELINE-MY-2026-07-20260801T010203Z.csv",
         )
         self.assertEqual(
             build_drive_file_name(
@@ -93,7 +109,7 @@ class PipelineConfigTests(unittest.TestCase):
                 year_id=2026,
                 month_id=7,
             ),
-            "CUSTOM_PIPELINE-MY-2026-07.csv",
+            "FIN-CUSTOM_PIPELINE-MY-2026-07.csv",
         )
 
     @mock.patch.dict(
